@@ -3,10 +3,10 @@
   This file tests CLJC support.")
 
 (defn normalize-path
-  "Normalizes a file path by removing redundant separators.
+  "Normalizes a file path by collapsing separators by removing redundant separators.
   Works on both JVM and JS."
   [path]
-  #?(:clj (clojure.string/replace path #"/+" "/")
+  #?(:clj  (clojure.string/replace path #"/+" "/")
      :cljs (clojure.string/replace path #"/+" "/")))
 
 (defn file-extension

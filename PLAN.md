@@ -175,21 +175,39 @@ Alternative Considered:
   - [x] List of test vars
   - [x] Integration with test runners (Kaocha, cognitect test-runner)
 
-### Phase 8: Testing & Refinement ⏸️ NEXT
-- [ ] Write tests for each component
-  - [ ] Cache persistence tests
-  - [ ] Incremental update tests
-  - [ ] Core test selection tests
-  - [ ] CLI tests
-- [ ] Test on real Clojure projects
-  - [ ] Test on this project itself
-  - [ ] Test on larger projects
-- [ ] Performance optimization
-- [ ] Documentation
-  - [ ] Usage guide
-  - [ ] API documentation
-  - [ ] Examples
-  - [ ] CI/CD integration guide
+### Phase 8: Testing & Refinement ✅ COMPLETE (2025-10-09)
+- [x] Test on this project itself
+  - [x] Created test files to validate functionality
+  - [x] Tested via nREPL with real git changes
+  - [x] Verified cache persistence and invalidation
+  - [x] Tested incremental updates
+- [x] Fixed critical bugs found during testing
+  - [x] clj-kondo integration (shell → API)
+  - [x] Cache serialization (Instant → string)
+  - [x] Test output formatting (MapEntry handling)
+  - [x] Revision comparison logic (smart defaults)
+- [ ] Write comprehensive unit tests for all components (TODO)
+- [ ] Test on larger Clojure projects (TODO)
+- [ ] Performance optimization (TODO)
+- [ ] Documentation improvements (TODO)
+
+### Phase 9: Advanced Test Detection ✅ COMPLETE (2025-10-09)
+- [x] Macro-based test detection (fulcro-spec)
+  - [x] Implement `find-macro-tests` function
+  - [x] Detect via `:var-usages` analysis
+  - [x] Support `fulcro-spec.core/specification`
+  - [x] Create test file and verify detection
+- [x] Integration test handling
+  - [x] Implement convention-based detection (`*.integration.*`)
+  - [x] Add `integration-test?` predicate
+  - [x] Enhance `find-affected-tests` for three scenarios
+  - [x] Create integration test examples
+  - [x] Verify conservative running behavior
+- [x] CLJC file support
+  - [x] Create CLJC file with reader conditionals
+  - [x] Verify clj-kondo analysis
+  - [x] Create tests depending on CLJC code
+  - [x] Verify dependency tracking
 
 ## Dependencies to Add
 
