@@ -66,24 +66,49 @@
 (defn find-affected-tests
   "Given a set of changed symbols and a dependency graph,
   returns the set of test symbols that transitively depend on any changed symbol.
+  
+  Handles integration tests specially:
+  - If a test has :test-targets metadata, only run if those targets changed
+  - If a test is marked :integration? but has no targets, run conservatively (always)
+  - Otherwise, use transitive dependency analysis
 
   Args:
     graph - loom directed graph of symbol dependencies
-    test-symbols - set of symbols that are tests
+    test-symbols - collection of test symbols or [symbol node-data] pairs
     changed-symbols - set of symbols that have changed
+    symbol-graph - original symbol graph with node metadata
 
   Returns:
     Set of test symbols that need to run"
-  [graph test-symbols changed-symbols]
-  (let [;; For each test, get its transitive dependencies
-        test-deps (into {}
-                        (map (fn [test-sym]
-                               [test-sym (transitive-dependencies graph test-sym)])
-                             test-symbols))]
-    ;; Find tests whose dependencies intersect with changed symbols
-    (set (for [[test-sym deps] test-deps
-               :when (seq (set/intersection deps changed-symbols))]
-           test-sym))))
+  [graph test-symbols changed-symbols symbol-graph]
+  (let [;; Normalize test-symbols to pairs if needed
+        test-pairs (if (and (seq test-symbols)
+                            (not (sequential? (first test-symbols))))
+                     (map (fn [sym] [sym (get-in symbol-graph [:nodes sym])]) test-symbols)
+                     test-symbols)
+
+        ;; For each test, determine if it should run
+        affected (for [[test-sym node] test-pairs
+                       :let [metadata (:metadata node)
+                             test-targets (:test-targets metadata)
+                             integration? (:integration? metadata)]]
+                   (cond
+                     ;; If test has explicit targets, check if any changed
+                     test-targets
+                     (when (seq (set/intersection test-targets changed-symbols))
+                       test-sym)
+
+                     ;; If integration test without targets, run conservatively
+                     ;; (we can't determine dependencies accurately)
+                     integration?
+                     test-sym
+
+                     ;; Otherwise, use transitive dependency analysis
+                     :else
+                     (let [deps (transitive-dependencies graph test-sym)]
+                       (when (seq (set/intersection deps changed-symbols))
+                         test-sym))))]
+    (set (filter some? affected))))
 
 ;; -----------------------------------------------------------------------------
 ;; Graph Utilities
@@ -111,5 +136,4 @@
 
   ;; Find affected tests when analyzer/run-analysis changes
   (def test-syms (set (map first (analyzer/find-test-vars symbol-graph))))
-  (find-affected-tests graph test-syms #{'test-filter.analyzer/run-analysis})
-  )
+  (find-affected-tests graph test-syms #{'test-filter.analyzer/run-analysis}))

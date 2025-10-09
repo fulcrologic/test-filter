@@ -58,8 +58,9 @@
         ;; Build dependency graph
         dep-graph (graph/build-dependency-graph symbol-graph)
 
-        ;; Find all test symbols - extract just the symbols (keys) from MapEntry objects
-        test-symbols (map first (analyzer/find-test-vars symbol-graph))
+;; Find all test vars - get pairs of [symbol node-data]
+        test-pairs (vec (analyzer/find-test-vars symbol-graph))
+        test-symbols (map first test-pairs)
 
         _ (when verbose
             (println "Total tests found:" (count test-symbols)))]
@@ -124,7 +125,7 @@
             ;; Find affected tests
             affected-tests (if (empty? changed-symbols)
                              []
-                             (graph/find-affected-tests dep-graph test-symbols changed-symbols))
+                             (graph/find-affected-tests dep-graph test-pairs changed-symbols symbol-graph))
 
             _ (when verbose
                 (println "Affected tests:" (count affected-tests)))]
