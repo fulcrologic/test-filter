@@ -5,6 +5,8 @@
 
 == Overview
 
+image:https://img.shields.io/clojars/v/com.fulcrologic/test-filter.svg[link=https://clojars.org/com.fulcrologic/test-filter]
+
 Test Filter is an intelligent test selection tool for Clojure projects that dramatically reduces test execution time by running only tests affected by your code changes. Instead of running your entire test suite on every change, Test Filter analyzes your source code dependencies and git history to determine the minimum set of tests that need to run.
 
 IMPORTANT: This project source and documentation was completely written by Claude Code. It wrote more than I wanted and
