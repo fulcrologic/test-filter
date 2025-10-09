@@ -199,7 +199,7 @@ clojure -M:cli clear
 ### CLJC File Support ✅
 - [x] **Verified CLJC analysis**
   - Created `src/main/test_filter/utils.cljc` with reader conditionals
-  - 4 symbols successfully detected: namespace, normalize-path, file-extension, join-paths
+  - 6 symbols successfully detected: namespace, normalize-path, file-extension, join-paths, log-message, parse-number
   - Reader conditionals `#?(:clj ...)` handled correctly by clj-kondo
 - [x] **Created test file**: `src/test/test_filter/utils_test.clj`
   - 3 tests: test-normalize-path, test-file-extension, test-join-paths
@@ -208,6 +208,12 @@ clojure -M:cli clear
   - Modified utils.cljc/normalize-path
   - 4 tests correctly selected (including integration tests)
   - CLJC dependency graph working correctly
+- [x] **Fixed CLJS filtering bug** (2025-10-09)
+  - Added functions using `js/console.log` and `js/parseFloat` to test CLJS filtering
+  - Discovered analyzer was including CLJS code from CLJC files
+  - Fixed by filtering both `:lang :cljs` AND `.cljs` file extensions
+  - Verified pure `.cljs` files are completely ignored
+  - Confirmed CLJ side of CLJC files still works correctly
 
 ### Test Statistics
 - **Total tests**: 12 (up from 6)

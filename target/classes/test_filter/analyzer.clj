@@ -66,21 +66,9 @@
 ;; -----------------------------------------------------------------------------
 
 (defn extract-var-definitions
-  "Extracts var definitions from clj-kondo analysis into our node format.
-  Only includes :clj language definitions, filtering out :cljs from CLJC files.
-  Also filters out pure .cljs files entirely."
+  "Extracts var definitions from clj-kondo analysis into our node format."
   [analysis]
-  (let [var-defs (get-in analysis [:analysis :var-definitions])
-        ;; Filter to only CLJ:
-        ;; - Reject if filename ends with .cljs (pure CLJS files)
-        ;; - Reject if :lang is :cljs (CLJS side of CLJC files)
-        ;; - Accept if :lang is nil (pure .clj files) or :clj (CLJ side of CLJC)
-        clj-only (filter (fn [def]
-                           (let [lang (:lang def)
-                                 filename (:filename def)]
-                             (and (not= :cljs lang)
-                                  (not (str/ends-with? filename ".cljs")))))
-                         var-defs)]
+  (let [var-defs (get-in analysis [:analysis :var-definitions])]
     (map (fn [{:keys [ns name filename row end-row defined-by meta] :as def}]
            (let [base-metadata (select-keys def [:private :macro :deprecated :test])
                  test-metadata (when (:test def) (extract-test-metadata def))
@@ -92,50 +80,32 @@
               :end-line end-row
               :defined-by defined-by
               :metadata all-metadata}))
-         clj-only)))
+         var-defs)))
 
 (defn extract-namespace-definitions
-  "Extracts namespace definitions from clj-kondo analysis.
-  Only includes :clj language namespaces, filtering out :cljs from CLJC files.
-  Also filters out pure .cljs files entirely."
+  "Extracts namespace definitions from clj-kondo analysis."
   [analysis]
-  (let [ns-defs (get-in analysis [:analysis :namespace-definitions])
-        ;; Filter to only CLJ (same logic as var-definitions)
-        clj-only (filter (fn [def]
-                           (let [lang (:lang def)
-                                 filename (:filename def)]
-                             (and (not= :cljs lang)
-                                  (not (str/ends-with? filename ".cljs")))))
-                         ns-defs)]
+  (let [ns-defs (get-in analysis [:analysis :namespace-definitions])]
     (map (fn [{:keys [name filename row] :as def}]
            {:symbol name
             :type :namespace
             :file filename
             :line row
             :metadata (select-keys def [:deprecated :doc])})
-         clj-only)))
+         ns-defs)))
 
 (defn extract-var-usages
   "Extracts var usage edges from clj-kondo analysis.
-  Returns edges showing which symbols use which other symbols.
-  Only includes :clj language usages, filtering out :cljs from CLJC files.
-  Also filters out pure .cljs files entirely."
+  Returns edges showing which symbols use which other symbols."
   [analysis]
-  (let [var-usages (get-in analysis [:analysis :var-usages])
-        ;; Filter to only CLJ (excludes js/ and other cljs refs)
-        clj-only (filter (fn [usage]
-                           (let [lang (:lang usage)
-                                 filename (:filename usage)]
-                             (and (not= :cljs lang)
-                                  (not (str/ends-with? filename ".cljs")))))
-                         var-usages)]
+  (let [var-usages (get-in analysis [:analysis :var-usages])]
     (map (fn [{:keys [from to name from-var filename row]}]
            {:from (when from-var
                     (symbol (str from) (str from-var)))
             :to (symbol (str to) (str name))
             :file filename
             :line row})
-         clj-only)))
+         var-usages)))
 
 (defn build-symbol-graph
   "Builds a complete symbol graph from clj-kondo analysis.

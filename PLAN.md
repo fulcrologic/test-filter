@@ -282,32 +282,33 @@ Alternative Considered:
 
 ---
 
-### Challenge 2: CLJC File Support
+### Challenge 2: CLJC File Support ✅ RESOLVED
 
-**Problem:** Current implementation may not properly handle `.cljc` (Clojure Common) files that contain both Clojure and ClojureScript code.
+**Problem:** Current implementation may not properly handle `.cljc` (Clojure Common) files that contain both Clojure and ClojureScript code, especially when CLJS code references `js/` global namespace.
 
 **Analysis:**
-- Our current code doesn't explicitly filter CLJC files
 - clj-kondo analyzes CLJC files and returns analysis for both `:clj` and `:cljs` platforms
-- We should process the `:clj` side of CLJC files
-- Current project has 0 CLJC files (all are `.clj`)
+- The `:lang` field differentiates: `nil` for pure files, `:clj`/`:cljs` for CLJC sides
+- Pure `.cljs` files also have `:lang nil` (not `:cljs`!), requiring file extension check
+- CLJS code can reference `js/console.log`, `js/parseFloat`, etc. which aren't valid in CLJ
 
-**Proposed Solutions:**
+**Solution Implemented (2025-10-09):**
 
-1. **Explicit CLJC support (RECOMMENDED)**
-   - clj-kondo already handles CLJC files correctly
-   - Our analyzer doesn't filter by extension, so CLJC files are already included
-   - Add test coverage to verify CLJC handling
-   - Document that we analyze the `:clj` side only
+1. **Dual filtering in analyzer**
+   - Filter by `:lang` field: reject `:cljs`, accept `nil` or `:clj`
+   - Filter by file extension: reject `.cljs` files entirely
+   - Applied to all three extraction functions:
+     - `extract-var-definitions`
+     - `extract-namespace-definitions`
+     - `extract-var-usages`
 
-2. **Platform-aware analysis**
-   - For CLJC files with reader conditionals, clj-kondo provides platform-specific analysis
-   - We could add logic to handle `#?(:clj ...)` vs `#?(:cljs ...)` blocks
-   - Currently not needed since we only care about CLJ
+2. **Testing**
+   - Added `log-message` and `parse-number` functions to `utils.cljc` with `js/` refs
+   - Created test `.cljs` file to verify complete exclusion
+   - Confirmed no `js/` symbols or malformed edges in graph
+   - Verified CLJ side of CLJC files still works correctly
 
-**Recommendation:** CLJC files should already work. Add a test with a CLJC file to verify, and document the behavior.
-
-**Status:** ✅ Likely already working, needs verification
+**Status:** ✅ Fully resolved and tested
 
 ---
 
