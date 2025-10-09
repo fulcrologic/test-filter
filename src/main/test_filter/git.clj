@@ -18,26 +18,41 @@
                       {:exit-code (:exit result)
                        :stderr (:err result)})))))
 
+(defn has-uncommitted-changes?
+  "Returns true if there are uncommitted changes in the working directory."
+  []
+  (let [result (shell/sh "git" "status" "--porcelain")]
+    (if (zero? (:exit result))
+      (not (str/blank? (:out result)))
+      (throw (ex-info "Failed to check git status"
+                      {:exit-code (:exit result)
+                       :stderr (:err result)})))))
+
 (defn git-diff
   "Gets the diff between two revisions.
 
   Args:
     from-rev - Starting revision (commit SHA)
-    to-rev - Ending revision (defaults to HEAD)
+    to-rev - Ending revision (nil = working directory, defaults to HEAD)
 
   Returns:
     String containing the git diff output"
   ([from-rev]
    (git-diff from-rev "HEAD"))
   ([from-rev to-rev]
-   (let [result (shell/sh "git" "diff" from-rev to-rev)]
+   (let [args (if (nil? to-rev)
+                ;; nil means compare to working directory
+                ["git" "diff" from-rev]
+                ;; otherwise compare between two revisions
+                ["git" "diff" from-rev to-rev])
+         result (apply shell/sh args)]
      (if (zero? (:exit result))
        (:out result)
        (throw (ex-info "Failed to get git diff"
                        {:exit-code (:exit result)
                         :stderr (:err result)
                         :from from-rev
-                        :to to-rev}))))))
+                        :to (or to-rev "working directory")}))))))
 
 (defn changed-files
   "Returns a list of files that changed between two revisions.
@@ -135,7 +150,7 @@
   Args:
     symbol-graph - Symbol graph from analyzer
     from-rev - Starting revision
-    to-rev - Ending revision (defaults to HEAD)
+    to-rev - Ending revision (nil = working directory, defaults to HEAD)
 
   Returns:
     Set of symbols that have changed"

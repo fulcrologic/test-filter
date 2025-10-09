@@ -11,12 +11,16 @@
   "Selects tests that need to run based on code changes.
   
   Options:
-  - :from-revision - Compare against specific git revision (default: cached revision)
-  - :to-revision - Compare to specific revision (default: HEAD/current)
+  - :from-revision - Compare against specific git revision (default: smart detection)
+  - :to-revision - Compare to specific revision (default: smart detection)
   - :paths - Paths to analyze (default: [\"src\"])
   - :force - Force full re-analysis (default: false)
   - :all-tests - Return all tests regardless of changes (default: false)
   - :verbose - Print diagnostic information (default: false)
+  
+  Smart revision detection (when from/to not specified):
+  - If uncommitted changes exist: compare HEAD to working directory
+  - If no uncommitted changes: compare HEAD^ to HEAD
   
   Returns:
   {:tests [test-symbols]
@@ -64,19 +68,30 @@
                :changed-symbols 0
                :selection-reason "all-tests requested"}}
 
-      ;; Determine changed symbols
-      (let [from-rev (or from-revision (:revision symbol-graph))
-            to-rev (or to-revision (git/current-revision))
+      ;; Determine changed symbols with smart revision detection
+      (let [;; Smart revision detection
+            has-uncommitted? (git/has-uncommitted-changes?)
+            current-head (git/current-revision)
+
+            ;; If uncommitted changes: compare HEAD to working dir
+            ;; If no uncommitted changes: compare HEAD^ to HEAD
+            from-rev (or from-revision
+                         (if has-uncommitted?
+                           current-head
+                           "HEAD^"))
+            to-rev (or to-revision
+                       (if has-uncommitted?
+                         nil ; nil means working directory
+                         current-head))
 
             _ (when verbose
+                (println "Uncommitted changes detected:" has-uncommitted?)
                 (println "Comparing revisions:")
                 (println "  From:" from-rev)
-                (println "  To:" to-rev))
+                (println "  To:" (or to-rev "working directory")))
 
-            ;; If revisions are the same, no changes
-            changed-symbols (if (= from-rev to-rev)
-                              []
-                              (git/find-changed-symbols symbol-graph from-rev to-rev))
+            ;; Find changed symbols
+            changed-symbols (git/find-changed-symbols symbol-graph from-rev to-rev)
 
             _ (when verbose
                 (println "Changed symbols:" (count changed-symbols))
