@@ -9,7 +9,9 @@
 ;; -----------------------------------------------------------------------------
 
 (defn current-revision
-  "Returns the current git revision (commit SHA)."
+  "Returns the current git revision (commit SHA).
+  
+  This function retrieves the full 40-character SHA hash of the current HEAD commit."
   []
   (let [result (shell/sh "git" "rev-parse" "HEAD")]
     (if (zero? (:exit result))
@@ -17,6 +19,25 @@
       (throw (ex-info "Failed to get current git revision"
                       {:exit-code (:exit result)
                        :stderr (:err result)})))))
+
+(defn resolve-revision
+  "Resolves a git revision reference (partial SHA, branch name, tag, etc.) to a full SHA.
+  
+  Examples:
+    (resolve-revision \"abc123\")     ; partial SHA
+    (resolve-revision \"HEAD~3\")     ; relative reference
+    (resolve-revision \"main\")       ; branch name
+    (resolve-revision \"v1.0.0\")     ; tag
+  
+  Returns the full commit SHA."
+  [rev-spec]
+  (let [result (shell/sh "git" "rev-parse" rev-spec)]
+    (if (zero? (:exit result))
+      (str/trim (:out result))
+      (throw (ex-info "Failed to resolve git revision"
+                      {:exit-code (:exit result)
+                       :stderr (:err result)
+                       :rev-spec rev-spec})))))
 
 (defn has-uncommitted-changes?
   "Returns true if there are uncommitted changes in the working directory."

@@ -11,8 +11,8 @@
   "Selects tests that need to run based on code changes.
   
   Options:
-  - :from-revision - Compare against specific git revision (default: smart detection)
-  - :to-revision - Compare to specific revision (default: smart detection)
+  - :from-revision - Compare against specific git revision (partial SHA, branch, tag, or ref like HEAD~3)
+  - :to-revision - Compare to specific revision (partial SHA, branch, tag, ref, or nil for working directory)
   - :paths - Paths to analyze (default: [\"src\"])
   - :force - Force full re-analysis (default: false)
   - :all-tests - Return all tests regardless of changes (default: false)
@@ -21,6 +21,13 @@
   Smart revision detection (when from/to not specified):
   - If uncommitted changes exist: compare HEAD to working directory
   - If no uncommitted changes: compare HEAD^ to HEAD
+  
+  Revision references support:
+  - Full SHA: \"dfd50cb754237161ec6ee4b86f7bb35a21ad4565\"
+  - Partial SHA: \"dfd50cb\" (will be resolved to full SHA)
+  - Branch name: \"main\", \"feature-branch\"
+  - Tag: \"v1.0.0\"
+  - Relative refs: \"HEAD^\", \"HEAD~3\", \"main~5\"
   
   Returns:
   {:tests [test-symbols]
@@ -73,19 +80,32 @@
             has-uncommitted? (git/has-uncommitted-changes?)
             current-head (git/current-revision)
 
+            ;; Resolve user-provided revisions or use smart defaults
             ;; If uncommitted changes: compare HEAD to working dir
             ;; If no uncommitted changes: compare HEAD^ to HEAD
-            from-rev (or from-revision
-                         (if has-uncommitted?
-                           current-head
-                           "HEAD^"))
-            to-rev (or to-revision
-                       (if has-uncommitted?
-                         nil ; nil means working directory
-                         current-head))
+            from-rev-raw (or from-revision
+                             (if has-uncommitted?
+                               current-head
+                               "HEAD^"))
+            to-rev-raw (or to-revision
+                           (if has-uncommitted?
+                             nil ; nil means working directory
+                             current-head))
+
+            ;; Resolve revision references to full SHAs (except nil for working dir)
+            from-rev (if (string? from-rev-raw)
+                       (git/resolve-revision from-rev-raw)
+                       from-rev-raw)
+            to-rev (if (string? to-rev-raw)
+                     (git/resolve-revision to-rev-raw)
+                     to-rev-raw)
 
             _ (when verbose
                 (println "Uncommitted changes detected:" has-uncommitted?)
+                (when from-revision
+                  (println "User-specified from-revision:" from-revision "resolved to:" from-rev))
+                (when to-revision
+                  (println "User-specified to-revision:" to-revision "resolved to:" (or to-rev "working directory")))
                 (println "Comparing revisions:")
                 (println "  From:" from-rev)
                 (println "  To:" (or to-rev "working directory")))
