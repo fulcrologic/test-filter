@@ -37,6 +37,7 @@
 (defn extract-var-definitions
   "Extracts var definitions from clj-kondo analysis into our node format."
   [analysis]
+  (println "Hello")
   (let [var-defs (get-in analysis [:analysis :var-definitions])]
     (map (fn [{:keys [ns name filename row end-row defined-by] :as def}]
            {:symbol (symbol (str ns) (str name))
