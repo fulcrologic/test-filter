@@ -4,3 +4,6 @@ scratch.clj
 .cpcache
 *.iml
 *.md
+
+.test-filter-cache.edn
+test_workflow.clj
