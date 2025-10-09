@@ -1,0 +1,20 @@
+{:paths   ["src/main"
+           "src/clj-kondo"]
+
+ :deps    {org.clojure/clojure         {:mvn/version "1.11.0"}
+           clj-kondo/clj-kondo         {:mvn/version "2025.01.10"}
+           aysylu/loom                 {:mvn/version "1.0.2"}
+           org.clojure/data.json       {:mvn/version "2.5.0"}
+           org.clojure/tools.cli       {:mvn/version "1.1.230"}}
+
+ :aliases {:test      {:extra-paths ["src/test" "src/test-clj-kondo"]
+                       :extra-deps  {org.clojure/test.check  {:mvn/version "1.1.1"}
+                                     fulcrologic/fulcro-spec {:mvn/version "3.1.12"}
+                                     clj-kondo/clj-kondo     {:mvn/version "2023.02.17"}}}
+
+           :clj-tests {:extra-paths ["src/test"]
+                       :main-opts   ["-m" "kaocha.runner"]
+                       :extra-deps  {lambdaisland/kaocha {:mvn/version "1.77.1236"}}}
+
+           :dev       {:extra-paths ["src/dev" "src/test"]
+                       :extra-deps  {org.clojure/tools.nrepl {:mvn/version "0.2.13"}}}}}
