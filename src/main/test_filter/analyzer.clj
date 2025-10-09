@@ -1,7 +1,6 @@
 (ns test-filter.analyzer
   "Analyzes Clojure source code using clj-kondo to build a symbol dependency graph."
-  (:require [clojure.java.shell :as shell]
-            [clojure.data.json :as json]
+  (:require [clj-kondo.core :as clj-kondo]
             [clojure.string :as str]))
 
 ;; -----------------------------------------------------------------------------
@@ -22,18 +21,14 @@
     :namespace-usages - Namespace requires/imports"
   [{:keys [paths config]
     :or {paths ["src"]}}]
-  (let [paths-str (str/join " " paths)
-        config-str (json/write-str (merge {:output {:format :json
-                                                     :analysis true}}
-                                           config))
-        result (shell/sh "clj-kondo"
-                         "--lint" paths-str
-                         "--config" config-str)]
-    (if (zero? (:exit result))
-      (json/read-str (:out result) :key-fn keyword)
+  (let [config-map (merge {:lint paths
+                           :config {:output {:analysis true}}}
+                          config)
+        result (clj-kondo/run! config-map)]
+    (if (:analysis result)
+      result
       (throw (ex-info "clj-kondo analysis failed"
-                      {:exit-code (:exit result)
-                       :stderr (:err result)})))))
+                      {:result result})))))
 
 ;; -----------------------------------------------------------------------------
 ;; Symbol Graph Building
@@ -116,5 +111,4 @@
   (keys graph)
   ;; => (:nodes :edges)
 
-  (def test-vars (find-test-vars graph))
-  )
+  (def test-vars (find-test-vars graph)))
