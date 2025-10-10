@@ -12,7 +12,7 @@
   ;; Example usage
 
   ;; Analyze codebase and build cache
-  (tf/analyze!)
+  (tf/analyze! :paths ["src/main" "src/demo" "src/test"])
 
   ;; Select tests based on changes since cache
   (def result (tf/select-tests :verbose true))
