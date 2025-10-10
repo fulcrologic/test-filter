@@ -143,15 +143,28 @@
   Returns:
     {:nodes {symbol -> node-data}
      :edges [{:from :to :file :line}]
+     :files {file-path -> {:symbols [symbols]}}
      :analysis - original analysis for reference}"
   [analysis]
   (let [var-nodes (extract-var-definitions analysis)
         ns-nodes (extract-namespace-definitions analysis)
         macro-test-nodes (find-macro-tests analysis)
         all-nodes (concat var-nodes ns-nodes (map second macro-test-nodes))
-        edges (extract-var-usages analysis)]
+        edges (vec (extract-var-usages analysis))
+
+        ;; Build files map: file-path -> {:symbols [symbols-in-file]}
+        files-map (reduce (fn [acc node]
+                            (let [file (:file node)
+                                  sym (:symbol node)]
+                              (update acc file
+                                      (fn [file-data]
+                                        (update (or file-data {:symbols []})
+                                                :symbols conj sym)))))
+                          {}
+                          all-nodes)]
     {:nodes (into {} (map (fn [node] [(:symbol node) node]) all-nodes))
      :edges edges
+     :files files-map
      :analysis analysis}))
 
 ;; -----------------------------------------------------------------------------

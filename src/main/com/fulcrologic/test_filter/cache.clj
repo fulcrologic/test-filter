@@ -2,6 +2,7 @@
   "Persistence and caching of symbol graphs with git revision tracking."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [clojure.set :as set]
             [com.fulcrologic.test-filter.analyzer :as analyzer]
             [com.fulcrologic.test-filter.git :as git])
   (:import [java.time Instant]))
@@ -67,42 +68,52 @@
 
   Steps:
   1. Find files changed since cache
-  2. Re-analyze those files
-  3. Remove old symbols from those files
-  4. Add new symbols from analysis
-  5. Update revision
+  2. Find files in cache that no longer exist on filesystem
+  3. Re-analyze changed files
+  4. Remove old symbols from changed and deleted files
+  5. Add new symbols from analysis
+  6. Update revision
 
   Returns updated graph."
   [{:keys [nodes edges files] :as cached-graph} changed-file-set]
-  (if (empty? changed-file-set)
-    ;; No changes, just update revision
-    (assoc cached-graph :revision (git/current-revision)
-           :analyzed-at (Instant/now))
-    ;; Re-analyze changed files
-    (let [;; Remove symbols from changed files
-          removed-symbols (set (mapcat :symbols
-                                       (vals (select-keys files changed-file-set))))
-          cleaned-nodes (apply dissoc nodes removed-symbols)
-          cleaned-edges (remove #(or (contains? removed-symbols (:from %))
-                                     (contains? removed-symbols (:to %)))
-                                edges)
+  (let [;; Find files in cache that no longer exist on filesystem
+        deleted-files (set (filter #(not (.exists (io/file %))) (keys files)))
+        ;; Combine changed and deleted files for removal
+        files-to-remove (set/union changed-file-set deleted-files)]
 
-          ;; Re-analyze changed files
-          paths (vec changed-file-set)
-          new-analysis (analyzer/run-analysis {:paths paths})
-          new-graph (analyzer/build-symbol-graph new-analysis)
+    (if (empty? files-to-remove)
+      ;; No changes, just update revision
+      (assoc cached-graph :revision (git/current-revision)
+             :analyzed-at (Instant/now))
+      ;; Process changes and deletions
+      (let [;; Remove symbols from changed and deleted files
+            removed-symbols (set (mapcat :symbols
+                                         (vals (select-keys files files-to-remove))))
+            cleaned-nodes (apply dissoc nodes removed-symbols)
+            cleaned-edges (remove #(or (contains? removed-symbols (:from %))
+                                       (contains? removed-symbols (:to %)))
+                                  edges)
 
-          ;; Merge new data
-          merged-nodes (merge cleaned-nodes (:nodes new-graph))
-          merged-edges (concat cleaned-edges (:edges new-graph))
-          merged-files (merge (apply dissoc files changed-file-set)
-                              (:files new-graph))]
+            ;; Re-analyze only changed files (not deleted ones)
+            paths (vec changed-file-set)
+            new-analysis (if (seq paths)
+                           (analyzer/run-analysis {:paths paths})
+                           {:analysis nil})
+            new-graph (if (seq paths)
+                        (analyzer/build-symbol-graph new-analysis)
+                        {:nodes {} :edges [] :files {}})
 
-      {:revision (git/current-revision)
-       :analyzed-at (Instant/now)
-       :nodes merged-nodes
-       :edges merged-edges
-       :files merged-files})))
+            ;; Merge new data
+            merged-nodes (merge cleaned-nodes (:nodes new-graph))
+            merged-edges (concat cleaned-edges (:edges new-graph))
+            merged-files (merge (apply dissoc files files-to-remove)
+                                (:files new-graph))]
+
+        {:revision (git/current-revision)
+         :analyzed-at (Instant/now)
+         :nodes merged-nodes
+         :edges merged-edges
+         :files merged-files}))))
 
 (defn get-or-build-graph
   "Gets cached graph if valid, otherwise builds a fresh one.
