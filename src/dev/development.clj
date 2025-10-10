@@ -23,7 +23,7 @@
 
 (comment
   (reload/reload)
-  ;; Full workflow example
+  (k/run-all)
 
   ;; 1. Analyze codebase (creates/updates analysis cache)
   (tf/analyze! :paths ["src/demo"])
@@ -65,5 +65,4 @@
   (cache/invalidate-cache!)                                 ; Clear analysis cache only
   (cache/invalidate-all-caches!)                            ; Clear both caches
 
-  ;; Run all tests
-  (k/run-all))
+  )

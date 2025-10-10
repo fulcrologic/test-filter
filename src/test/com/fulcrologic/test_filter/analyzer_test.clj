@@ -59,7 +59,7 @@
           test-vars (analyzer/find-test-vars graph)]
 
       (assertions
-        "finds this test namespace"
+        "finds test vars from this namespace"
         (some (fn [[sym _node]]
-                (= sym 'com.fulcrologic.test-filter.analyzer-test))
+                (= (namespace sym) "com.fulcrologic.test-filter.analyzer-test"))
           test-vars) => true))))

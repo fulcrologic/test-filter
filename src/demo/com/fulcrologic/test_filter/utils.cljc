@@ -6,7 +6,7 @@
   "Normalizes a file path by collapsing separators by removing redundant separators.
   Works on both JVM and JS."
   [path]
-  #?(:clj (clojure.string/replace path #"/+" "/")
+  #?(:clj  (clojure.string/replace path #"/+" "/")
      :cljs (clojure.string/replace path #"/+" "/")))
 
 (defn file-extension
@@ -23,11 +23,11 @@
 (defn log-message
   "Logs a message to the console. Platform-specific implementation."
   [msg]
-  #?(:clj (println msg)
+  #?(:clj  (println msg)
      :cljs (js/console.log msg)))
 
 (defn parse-number
   "Parses a string to a number. Platform-specific implementation."
   [s]
-  #?(:clj (Long/parseLong s)
+  #?(:clj  (Long/parseLong s)
      :cljs (js/parseFloat s)))
