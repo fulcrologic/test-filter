@@ -12,7 +12,7 @@
 (defn file-extension
   "Returns the file extension from a path."
   [path]
-  (when-let [dot-idx (clojure.string/last-index-of path "\\")]
+  (when-let [dot-idx (clojure.string/last-index-of path ".")]
     (subs path (inc dot-idx))))
 
 (defn join-paths

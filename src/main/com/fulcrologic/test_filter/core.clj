@@ -17,10 +17,12 @@
   Options:
   - :paths - Paths to analyze (default: [\"src\"])
   - :verbose - Print diagnostic information (default: true)
+  - :save? - (default true) save the analysis to an on-disk cache
 
   Returns the built symbol graph with :content-hashes."
-  [& {:keys [paths verbose]
+  [& {:keys [paths verbose save?]
       :or   {paths   ["src"]
+             save? true
              verbose true}}]
 
   (when verbose
@@ -35,7 +37,7 @@
         content-hashes (content/hash-graph-symbols graph)
 
         ;; Save to analysis cache
-        _              (cache/save-graph! graph content-hashes paths)
+        _              (when save? (cache/save-graph! graph content-hashes paths))
 
         elapsed        (- (System/currentTimeMillis) start-time)
         stats          (graph/graph-stats (graph/build-dependency-graph graph))

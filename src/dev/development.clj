@@ -29,11 +29,13 @@
   (def graph (tf/analyze! :paths ["src/demo"]))
 
   ;; 2. Select tests (compares current vs success cache)
-  (def selection
-    (tf/select-tests
-      :graph (tf/patch-graph-with-local-changes graph)
-      :verbose true
-      :paths ["src/demo"]))
+  (some->> (:tests
+             (tf/select-tests
+               :graph (tf/patch-graph-with-local-changes graph)
+               :verbose true
+               :paths ["src/demo"]))
+    (seq)
+    (apply k/run))
 
   ;; 3. View what needs testing
   (tf/print-tests (:tests selection) :format :namespaces)
