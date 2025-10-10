@@ -119,25 +119,41 @@
   "Extracts var usage edges from clj-kondo analysis.
   Returns edges showing which symbols use which other symbols.
   Only includes :clj language usages, filtering out :cljs from CLJC files.
-  Also filters out pure .cljs files entirely."
-  [analysis]
-  (let [var-usages (get-in analysis [:analysis :var-usages])
-        ;; Filter to only CLJ (excludes js/ and other cljs refs)
-        clj-only (filter (fn [usage]
-                           (let [lang (:lang usage)
-                                 filename (:filename usage)]
-                             (and (not= :cljs lang)
-                                  (not (str/ends-with? filename ".cljs")))))
-                         var-usages)]
-    (map (fn [{:keys [from to name from-var filename row]}]
-           {:from (if from-var
-                    (symbol (str from) (str from-var))
-                    ;; For top-level code (like macro-based tests), use the namespace
-                    (symbol (str from)))
-            :to (symbol (str to) (str name))
-            :file filename
-            :line row})
-         clj-only)))
+  Also filters out pure .cljs files entirely.
+  
+  For macro-based tests, uses test-line-ranges to map top-level usages to 
+  specific test vars based on line numbers."
+  ([analysis] (extract-var-usages analysis {}))
+  ([analysis test-line-ranges]
+   (let [var-usages (get-in analysis [:analysis :var-usages])
+         ;; Filter to only CLJ (excludes js/ and other cljs refs)
+         clj-only (filter (fn [usage]
+                            (let [lang (:lang usage)
+                                  filename (:filename usage)]
+                              (and (not= :cljs lang)
+                                   (not (str/ends-with? filename ".cljs")))))
+                          var-usages)]
+     (map (fn [{:keys [from to name from-var filename row]}]
+            (let [from-sym (if from-var
+                             ;; Regular case: usage inside a function
+                             (symbol (str from) (str from-var))
+                             ;; Top-level usage: check if it's in a macro test
+                             (if-let [test-ranges (get test-line-ranges filename)]
+                               ;; Find which test var this line belongs to
+                               (or (some (fn [{:keys [test-var start-line end-line]}]
+                                           (when (and (>= row start-line)
+                                                      (<= row end-line))
+                                             test-var))
+                                         test-ranges)
+                                   ;; Fall back to namespace if not in a test range
+                                   (symbol (str from)))
+                               ;; No test ranges for this file, use namespace
+                               (symbol (str from))))]
+              {:from from-sym
+               :to (symbol (str to) (str name))
+               :file filename
+               :line row}))
+          clj-only))))
 
 (defn build-symbol-graph
   "Builds a complete symbol graph from clj-kondo analysis.
@@ -151,8 +167,47 @@
   (let [var-nodes (extract-var-definitions analysis)
         ns-nodes (extract-namespace-definitions analysis)
         macro-test-nodes (find-macro-tests analysis)
+
+        ;; Build test line ranges for mapping top-level usages to test vars
+        test-line-ranges (let [var-usages (get-in analysis [:analysis :var-usages])
+                               macro-calls (filter (fn [{:keys [to name]}]
+                                                     (contains? default-test-macros
+                                                                (symbol (str to) (str name))))
+                                                   var-usages)
+                               by-file (group-by :filename macro-calls)]
+                           (into {}
+                                 (keep (fn [[filepath calls]]
+                                         (try
+                                           (let [source (slurp filepath)
+                                                 spec-pattern #"\(specification\s+\"([^\"]+)\""
+                                                 lines (str/split-lines source)
+                                               ;; Find specification lines and their test names
+                                                 specs (keep-indexed
+                                                        (fn [idx line]
+                                                          (when-let [match (re-find spec-pattern line)]
+                                                            {:line (inc idx)
+                                                             :test-name (second match)}))
+                                                        lines)
+                                                 ns-sym (:from (first calls))
+                                               ;; Match specs with their line ranges from clj-kondo
+                                                 spec-ranges (mapv (fn [spec call]
+                                                                     (let [test-name (:test-name spec)
+                                                                           var-name (symbol (str "__"
+                                                                                                 (str/replace test-name #"[^\w\d\-\!\#\$\%\&\*\_\<\>\:\?\|]" "-")
+                                                                                                 "__"))
+                                                                           test-sym (symbol (str ns-sym) (str var-name))]
+                                                                       {:test-var test-sym
+                                                                        :start-line (:row call)
+                                                                        :end-line (:end-row call)}))
+                                                                   specs
+                                                                   calls)]
+                                             [filepath spec-ranges])
+                                           (catch Exception e
+                                             nil)))
+                                       by-file)))
+
         all-nodes (concat var-nodes ns-nodes (map second macro-test-nodes))
-        edges (vec (extract-var-usages analysis))
+        edges (vec (extract-var-usages analysis test-line-ranges))
 
         ;; Build files map: file-path -> {:symbols [symbols-in-file]}
         files-map (reduce (fn [acc node]
@@ -193,8 +248,8 @@
 (defn find-macro-tests
   "Find tests defined by macros like fulcro-spec's specification.
 
-  Returns a map of pseudo-test-vars in the same format as regular test vars,
-  using the namespace as the test symbol since macro calls don't create var definitions.
+  Parses source files to extract test names from specification calls and creates
+  individual test var nodes using the same naming convention as fulcro-spec.
 
   Args:
     analysis - clj-kondo analysis result
@@ -207,22 +262,37 @@
                                (contains? test-macros
                                           (symbol (str to) (str name))))
                              var-usages)
-         ;; Group by namespace since we don't have individual test names
-         by-namespace (group-by :from macro-calls)]
-     ;; Create one test entry per namespace containing macro tests
-     (map (fn [[ns-sym calls]]
-            (let [first-call (first calls)]
-              [ns-sym
-               {:symbol ns-sym
-                :type :test
-                :file (:filename first-call)
-                :line (:row first-call)
-                :end-line (:end-row first-call)
-                :defined-by 'macro-test
-                :metadata {:test true
-                           :macro-test true
-                           :test-count (count calls)}}]))
-          by-namespace))))
+         ;; Group by file since we need to parse the source
+         by-file (group-by :filename macro-calls)]
+     ;; For each file with macro test calls, parse and create test vars
+     (mapcat
+      (fn [[filepath calls]]
+        (try
+          (let [source (slurp filepath)
+                ;; Extract specification test names from source
+                spec-pattern #"\(specification\s+\"([^\"]+)\""
+                matches (re-seq spec-pattern source)
+                ns-sym (:from (first calls))]
+            ;; Create a test var for each specification
+            (map (fn [[_ test-name]]
+                   (let [;; Apply fulcro-spec's var naming convention
+                         var-name (symbol (str "__" (str/replace test-name #"[^\w\d\-\!\#\$\%\&\*\_\<\>\:\?\|]" "-") "__"))
+                         test-sym (symbol (str ns-sym) (str var-name))]
+                     [test-sym
+                      {:symbol test-sym
+                       :type :test
+                       :file filepath
+                       :line (:row (first calls))
+                       :end-line (:end-row (first calls))
+                       :defined-by 'fulcro-spec.core/specification
+                       :metadata {:test true
+                                  :macro-test true
+                                  :test-name test-name}}]))
+                 matches))
+          (catch Exception e
+            (println "Warning: Failed to parse macro tests in" filepath ":" (.getMessage e))
+            [])))
+      by-file))))
 
 (comment
   ;; Example usage:
