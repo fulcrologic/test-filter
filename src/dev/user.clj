@@ -13,10 +13,11 @@
   (run-tests!)
 
   ;; Analyze codebase and build cache
-  (tf/analyze! :paths ["src/main" "src/demo" "src/test"])
+  (tf/analyze! :paths ["src/demo"] :force true)
 
   ;; Select tests based on changes since cache
-  (def result (tf/select-tests :verbose true))
+  (def result (tf/select-tests :verbose true
+                :paths ["src/demo"]))
 
   ;; Print affected test namespaces
   (tf/print-tests (:tests result) :format :namespaces)

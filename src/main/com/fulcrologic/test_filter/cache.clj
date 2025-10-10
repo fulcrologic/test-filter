@@ -16,18 +16,20 @@
   *cache-file*)
 
 (defn save-graph!
-  "Persists a symbol graph to disk with revision metadata and content hashes.
+  "Persists a symbol graph to disk with revision metadata, content hashes, and analyzed paths.
 
   Graph structure:
   {:revision \"abc123...\"
    :analyzed-at \"2024-...\"  ; ISO-8601 string
+   :paths [\"src/main\" \"src/test\"]  ; Paths that were analyzed
    :nodes {...}
    :edges [...]
    :files {\"src/foo.clj\" {:symbols [...] :revision \"abc123\"}}
    :content-hashes {symbol -> SHA256-hex-string}}"
-  [symbol-graph revision content-hashes]
+  [symbol-graph revision content-hashes paths]
   (let [cache-data {:revision revision
                     :analyzed-at (str (Instant/now)) ; Convert to string for EDN
+                    :paths paths
                     :nodes (:nodes symbol-graph)
                     :edges (:edges symbol-graph)
                     :files (:files symbol-graph)
@@ -147,7 +149,7 @@
       (let [analysis (analyzer/run-analysis {:paths paths})
             graph (analyzer/build-symbol-graph analysis)
             hashes (content/hash-graph-symbols graph)]
-        (save-graph! graph current-rev hashes)
+        (save-graph! graph current-rev hashes paths)
         (assoc graph :content-hashes hashes))
 
       ;; Cache valid, use it
@@ -158,7 +160,7 @@
       (and incremental cached)
       (let [changed (changed-files-since-cache cached)
             updated (incremental-update cached changed)]
-        (save-graph! updated (:revision updated) (:content-hashes updated))
+        (save-graph! updated (:revision updated) (:content-hashes updated) (:paths cached))
         updated)
 
       ;; No cache or incremental disabled, full rebuild
@@ -166,7 +168,7 @@
       (let [analysis (analyzer/run-analysis {:paths paths})
             graph (analyzer/build-symbol-graph analysis)
             hashes (content/hash-graph-symbols graph)]
-        (save-graph! graph current-rev hashes)
+        (save-graph! graph current-rev hashes paths)
         (assoc graph :content-hashes hashes)))))
 
 (defn invalidate-cache!

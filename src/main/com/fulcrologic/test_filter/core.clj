@@ -13,7 +13,7 @@
   Options:
   - :from-revision - Compare against specific git revision (partial SHA, branch, tag, or ref like HEAD~3)
   - :to-revision - Compare to specific revision (partial SHA, branch, tag, ref, or nil for working directory)
-  - :paths - Paths to analyze (default: [\"src\"])
+  - :paths - Paths to analyze (default: uses cached paths, or [\"src\"] if no cache)
   - :force - Force full re-analysis (default: false)
   - :all-tests - Return all tests regardless of changes (default: false)
   - :verbose - Print diagnostic information (default: false)
@@ -36,139 +36,146 @@
    :cache-hit? boolean
    :stats {...}}"
   [& {:keys [from-revision to-revision paths force all-tests verbose]
-      :or {paths ["src"]
-           force false
+      :or {force false
            all-tests false
            verbose false}}]
 
-  (when verbose
-    (println "=== Test Selection ===")
-    (println "Paths:" paths)
-    (println "Force rebuild:" force))
+  ;; Determine paths: use provided paths, or cached paths, or default to ["src"]
+  (let [cached-graph (when-not force (cache/load-graph))
+        effective-paths (or paths
+                            (:paths cached-graph)
+                            ["src"])]
 
-  ;; Get or build the symbol graph
-  (let [symbol-graph (cache/get-or-build-graph :force force :paths paths)
-        cache-hit? (and (not force) (cache/cache-valid? (cache/load-graph)))
+    (when verbose
+      (println "=== Test Selection ===")
+      (println "Paths:" effective-paths)
+      (when (and (nil? paths) (:paths cached-graph))
+        (println "  (using cached paths)"))
+      (println "Force rebuild:" force))
 
-        _ (when verbose
-            (println "Cache hit:" cache-hit?)
-            (println "Graph nodes:" (count (:nodes symbol-graph)))
-            (println "Graph edges:" (count (:edges symbol-graph))))
+    ;; Get or build the symbol graph
+    (let [symbol-graph (cache/get-or-build-graph :force force :paths effective-paths)
+          cache-hit? (and (not force) (cache/cache-valid? cached-graph))
 
-        ;; Build dependency graph
-        dep-graph (graph/build-dependency-graph symbol-graph)
+          _ (when verbose
+              (println "Cache hit:" cache-hit?)
+              (println "Graph nodes:" (count (:nodes symbol-graph)))
+              (println "Graph edges:" (count (:edges symbol-graph))))
 
-        ;; Find all test vars - get pairs of [symbol node-data]
-        test-pairs (vec (analyzer/find-test-vars symbol-graph))
-        test-symbols (map first test-pairs)
+          ;; Build dependency graph
+          dep-graph (graph/build-dependency-graph symbol-graph)
 
-        _ (when verbose
-            (println "Total tests found:" (count test-symbols)))]
+          ;; Find all test vars - get pairs of [symbol node-data]
+          test-pairs (vec (analyzer/find-test-vars symbol-graph))
+          test-symbols (map first test-pairs)
 
-    (if all-tests
-      ;; Return all tests
-      {:tests test-symbols
-       :changed-symbols []
-       :graph symbol-graph
-       :cache-hit? cache-hit?
-       :stats {:total-tests (count test-symbols)
-               :selected-tests (count test-symbols)
-               :changed-symbols 0
-               :selection-reason "all-tests requested"}}
+          _ (when verbose
+              (println "Total tests found:" (count test-symbols)))]
 
-      ;; Determine changed symbols using content hash comparison
-      (let [;; Smart revision detection
-            has-uncommitted? (git/has-uncommitted-changes?)
-            current-head (git/current-revision)
-
-            ;; Resolve user-provided revisions or use smart defaults
-            ;; If uncommitted changes: compare HEAD to working dir
-            ;; If no uncommitted changes: compare HEAD^ to HEAD
-            from-rev-raw (or from-revision
-                             (if has-uncommitted?
-                               current-head
-                               "HEAD^"))
-            to-rev-raw (or to-revision
-                           (if has-uncommitted?
-                             nil ; nil means working directory
-                             current-head))
-
-            ;; Resolve revision references to full SHAs (except nil for working dir)
-            from-rev (if (string? from-rev-raw)
-                       (git/resolve-revision from-rev-raw)
-                       from-rev-raw)
-            to-rev (if (string? to-rev-raw)
-                     (git/resolve-revision to-rev-raw)
-                     to-rev-raw)
-
-            _ (when verbose
-                (println "Uncommitted changes detected:" has-uncommitted?)
-                (when from-revision
-                  (println "User-specified from-revision:" from-revision "resolved to:" from-rev))
-                (when to-revision
-                  (println "User-specified to-revision:" to-revision "resolved to:" (or to-rev "working directory")))
-                (println "Comparing revisions:")
-                (println "  From:" from-rev)
-                (println "  To:" (or to-rev "working directory")))
-
-            ;; Get list of changed files from git
-            changed-files (git/changed-files from-rev to-rev)
-
-            _ (when verbose
-                (println "Changed files:" (count changed-files))
-                (when (seq changed-files)
-                  (doseq [file (take 10 changed-files)]
-                    (println "  -" file))
-                  (when (> (count changed-files) 10)
-                    (println "  ... and" (- (count changed-files) 10) "more"))))
-
-            ;; Re-analyze changed files to get "live" symbol data
-            changed-analysis (if (seq changed-files)
-                               (analyzer/run-analysis {:paths (vec changed-files)})
-                               {:analysis nil})
-            changed-graph (if (seq changed-files)
-                            (analyzer/build-symbol-graph changed-analysis)
-                            {:nodes {} :edges [] :files {}})
-
-            ;; Generate content hashes for re-analyzed symbols
-            new-hashes (if (seq changed-files)
-                         (content/hash-graph-symbols changed-graph)
-                         {})
-
-            ;; Get cached content hashes
-            old-hashes (or (:content-hashes symbol-graph) {})
-
-            ;; Compare hashes to find truly changed symbols
-            changed-symbols (content/find-changed-symbols old-hashes new-hashes)
-
-            _ (when verbose
-                (println "Symbols with content changes:" (count changed-symbols))
-                (when (seq changed-symbols)
-                  (doseq [sym (take 10 changed-symbols)]
-                    (println "  -" sym))
-                  (when (> (count changed-symbols) 10)
-                    (println "  ... and" (- (count changed-symbols) 10) "more"))))
-
-            ;; Find affected tests
-            affected-tests (if (empty? changed-symbols)
-                             []
-                             (graph/find-affected-tests dep-graph test-pairs changed-symbols symbol-graph))
-
-            _ (when verbose
-                (println "Affected tests:" (count affected-tests)))]
-
-        {:tests affected-tests
-         :changed-symbols changed-symbols
+      (if all-tests
+        ;; Return all tests
+        {:tests test-symbols
+         :changed-symbols []
          :graph symbol-graph
          :cache-hit? cache-hit?
          :stats {:total-tests (count test-symbols)
-                 :selected-tests (count affected-tests)
-                 :changed-symbols (count changed-symbols)
-                 :selection-rate (if (pos? (count test-symbols))
-                                   (format "%.1f%%"
-                                           (* 100.0 (/ (count affected-tests)
-                                                       (count test-symbols))))
-                                   "N/A")}}))))
+                 :selected-tests (count test-symbols)
+                 :changed-symbols 0
+                 :selection-reason "all-tests requested"}}
+
+        ;; Determine changed symbols using content hash comparison
+        (let [;; Smart revision detection
+              has-uncommitted? (git/has-uncommitted-changes?)
+              current-head (git/current-revision)
+
+              ;; Resolve user-provided revisions or use smart defaults
+              ;; If uncommitted changes: compare HEAD to working dir
+              ;; If no uncommitted changes: compare HEAD^ to HEAD
+              from-rev-raw (or from-revision
+                               (if has-uncommitted?
+                                 current-head
+                                 "HEAD^"))
+              to-rev-raw (or to-revision
+                             (if has-uncommitted?
+                               nil ; nil means working directory
+                               current-head))
+
+              ;; Resolve revision references to full SHAs (except nil for working dir)
+              from-rev (if (string? from-rev-raw)
+                         (git/resolve-revision from-rev-raw)
+                         from-rev-raw)
+              to-rev (if (string? to-rev-raw)
+                       (git/resolve-revision to-rev-raw)
+                       to-rev-raw)
+
+              _ (when verbose
+                  (println "Uncommitted changes detected:" has-uncommitted?)
+                  (when from-revision
+                    (println "User-specified from-revision:" from-revision "resolved to:" from-rev))
+                  (when to-revision
+                    (println "User-specified to-revision:" to-revision "resolved to:" (or to-rev "working directory")))
+                  (println "Comparing revisions:")
+                  (println "  From:" from-rev)
+                  (println "  To:" (or to-rev "working directory")))
+
+              ;; Get list of changed files from git
+              changed-files (git/changed-files from-rev to-rev)
+
+              _ (when verbose
+                  (println "Changed files:" (count changed-files))
+                  (when (seq changed-files)
+                    (doseq [file (take 10 changed-files)]
+                      (println "  -" file))
+                    (when (> (count changed-files) 10)
+                      (println "  ... and" (- (count changed-files) 10) "more"))))
+
+              ;; Re-analyze changed files to get "live" symbol data
+              changed-analysis (if (seq changed-files)
+                                 (analyzer/run-analysis {:paths (vec changed-files)})
+                                 {:analysis nil})
+              changed-graph (if (seq changed-files)
+                              (analyzer/build-symbol-graph changed-analysis)
+                              {:nodes {} :edges [] :files {}})
+
+              ;; Generate content hashes for re-analyzed symbols
+              new-hashes (if (seq changed-files)
+                           (content/hash-graph-symbols changed-graph)
+                           {})
+
+              ;; Get cached content hashes
+              old-hashes (or (:content-hashes symbol-graph) {})
+
+              ;; Compare hashes to find truly changed symbols
+              changed-symbols (content/find-changed-symbols old-hashes new-hashes)
+
+              _ (when verbose
+                  (println "Symbols with content changes:" (count changed-symbols))
+                  (when (seq changed-symbols)
+                    (doseq [sym (take 10 changed-symbols)]
+                      (println "  -" sym))
+                    (when (> (count changed-symbols) 10)
+                      (println "  ... and" (- (count changed-symbols) 10) "more"))))
+
+              ;; Find affected tests
+              affected-tests (if (empty? changed-symbols)
+                               []
+                               (graph/find-affected-tests dep-graph test-pairs changed-symbols symbol-graph))
+
+              _ (when verbose
+                  (println "Affected tests:" (count affected-tests)))]
+
+          {:tests affected-tests
+           :changed-symbols changed-symbols
+           :graph symbol-graph
+           :cache-hit? cache-hit?
+           :stats {:total-tests (count test-symbols)
+                   :selected-tests (count affected-tests)
+                   :changed-symbols (count changed-symbols)
+                   :selection-rate (if (pos? (count test-symbols))
+                                     (format "%.1f%%"
+                                             (* 100.0 (/ (count affected-tests)
+                                                         (count test-symbols))))
+                                     "N/A")}})))))
 
 (defn analyze!
   "Analyzes the codebase and builds/updates the cache.

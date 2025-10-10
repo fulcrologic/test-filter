@@ -16,8 +16,10 @@ as advertised.
 === Key Features
 
 * **Dependency-aware**: Builds a complete symbol dependency graph using static analysis
-* **Git-integrated**: Tracks changes between revisions to identify affected code
-* **Intelligent caching**: Incrementally updates analysis, avoiding full re-scans
+* **Content-hash based change detection**: Uses SHA256 hashes of normalized code to detect semantic changes
+* **Formatting-immune**: Ignores whitespace, indentation, and docstring changes - only logic changes trigger tests
+* **Git-integrated**: Tracks file changes between revisions to identify affected code
+* **Intelligent caching**: Incrementally updates analysis with content hashes, avoiding full re-scans
 * **Multiple test frameworks**: Supports `clojure.test`, `fulcro-spec`, and custom test macros
 * **Integration test handling**: Special handling for integration tests with broad dependencies
 * **CLJC support**: Properly handles Clojure Common files with reader conditionals
@@ -25,24 +27,61 @@ as advertised.
 
 === How It Works
 
-1. **Build source graph**: Analyze your codebase with clj-kondo to create a dependency graph
-2. **Cache with git revision**: Store the graph along with the current git commit SHA
-3. **Detect changes**: Use `git diff` to identify modified code since the cached revision
-4. **Walk dependencies**: Traverse the graph backwards from tests to find transitive dependencies
-5. **Select tests**: Run only tests whose dependencies include changed code
+Test Filter uses a two-cache architecture to track which tests need to run:
 
-.Example Flow
+1. **Analysis Cache** (`.test-filter-cache.edn`): Ephemeral snapshot of current codebase
+   - Contains dependency graph and current content hashes
+   - Completely overwritten on each `analyze!` command
+   - Only used to communicate between CLI steps
+
+2. **Success Cache** (`.test-filter-success.edn`): Persistent baseline of verified code
+   - Contains content hashes of successfully tested symbols
+   - Only updated when you explicitly mark tests as verified
+   - Persists across sessions and builds
+
+==== Workflow
+
+1. **Analyze**: Build dependency graph and generate current content hashes
+   - Parses all source files with clj-kondo
+   - Creates SHA256 hashes of normalized function bodies (ignoring docstrings/formatting)
+   - Writes snapshot to analysis cache
+
+2. **Select Tests**: Compare current state vs. verified baseline
+   - Loads current hashes from analysis cache
+   - Loads verified hashes from success cache
+   - Identifies symbols where current hash ≠ verified hash
+   - Walks dependency graph to find affected tests
+
+3. **Run Tests**: Execute the selected tests (user action)
+
+4. **Mark Verified**: Record that tests passed
+   - Updates success cache with hashes from current analysis
+   - Only done after tests successfully pass
+   - Creates new baseline for future comparisons
+
+.Example: Formatting Change (No Tests Triggered)
 ----
-Source Change: modify function `foo/bar` at line 42
-↓
-Consult Graph: which symbols use `foo/bar`?
-↓
-Transitive Walk: `baz/qux` uses `foo/bar`
-                 `app/handler` uses `baz/qux`
-                 `app-test/handler-test` tests `app/handler`
-↓
-Test Selection: run `app-test/handler-test`
-                (and any other tests that transitively depend on `foo/bar`)
+1. Analyze: generates hash "abc123" for `foo/bar` (docstring + formatting)
+2. User reformats docstring
+3. Analyze: generates hash "abc123" for `foo/bar` (still same - normalized)
+4. Select Tests: current hash = success hash → NO tests needed
+----
+
+.Example: Logic Change (Tests Triggered)
+----
+1. Success cache has: foo/bar → "abc123" (verified)
+2. User changes `foo/bar` logic: (* x 2) becomes (* x 3)
+3. Analyze: generates new hash "def456" for `foo/bar`
+4. Select Tests: current hash ≠ success hash → change detected
+5. Walk Graph: find tests depending on `foo/bar`
+   - `baz/qux` uses `foo/bar`
+   - `app/handler` uses `baz/qux`
+   - `app-test/handler-test` tests `app/handler`
+6. Return Selection: {:tests [app-test/handler-test]
+                      :changed-symbols #{foo/bar}
+                      :changed-hashes {foo/bar "def456"}}
+7. User runs tests, they pass
+8. Mark Verified: updates success cache with foo/bar → "def456"
 ----
 
 == Installation
@@ -64,7 +103,7 @@ Add to your `deps.edn`:
 
 ==== Analyze Command
 
-Build or update the dependency graph cache:
+Analyze the current codebase and update the analysis cache:
 
 [source,bash]
 ----
@@ -75,7 +114,9 @@ This command:
 
 * Runs clj-kondo analysis on your source code
 * Builds a complete symbol dependency graph
-* Stores it in `.test-filter-cache.edn` with the current git revision
+* Generates content hashes for all symbols
+* Overwrites `.test-filter-cache.edn` with current state
+* NOTE: Does NOT update the success cache - that's done with `mark-verified`
 
 ==== Select Command
 
@@ -127,13 +168,36 @@ Shows:
 * Number of symbols and dependencies
 * Cache age
 
-==== Clear Command
+==== Mark Verified Command
 
-Invalidate the cache:
+Mark tests as successfully verified (updates success cache):
 
 [source,bash]
 ----
+# Mark all selected tests as verified
+clojure -M:cli mark-verified
+
+# Mark specific tests as verified
+clojure -M:cli mark-verified -t my.app.core-test/foo-test
+----
+
+This command:
+
+* Updates `.test-filter-success.edn` with verified symbol hashes
+* Should only be run after tests pass
+* Creates the baseline for future test selection
+
+==== Clear Command
+
+Invalidate the caches:
+
+[source,bash]
+----
+# Clear analysis cache only
 clojure -M:cli clear
+
+# Clear both analysis and success caches
+clojure -M:cli clear --all
 ----
 
 === Programmatic API
@@ -142,24 +206,32 @@ Use Test Filter from the REPL or your code:
 
 [source,clojure]
 ----
-(require '[com.fulcrologic.test-filter.core :as core])
+(require '[com.fulcrologic.test-filter.core :as tf])
 
-;; Analyze the codebase and build cache
-(core/analyze!)
+;; 1. Analyze the codebase (generates current state)
+(tf/analyze! :paths ["src/main" "src/test"])
 
-;; Select tests based on changes
-(def result (core/select-tests :verbose true))
+;; 2. Select tests based on changes
+(def selection (tf/select-tests :verbose true))
 
-;; Show affected tests
-(core/print-tests (:tests result) :format :namespaces)
+;; The selection contains everything needed for verification
+selection
+;; => {:tests [my.app-test/foo-test my.app-test/bar-test]
+;;     :changed-symbols #{my.app/foo my.app/bar}
+;;     :changed-hashes {my.app/foo "abc123..." my.app/bar "def456..."}
+;;     :graph {...}
+;;     :stats {...}}
 
-;; Check statistics
-(:stats result)
-;; => {:total-symbols 153
-;;     :total-dependencies 355
-;;     :total-tests 12
-;;     :affected-tests 3
-;;     :tests-skipped 9}
+;; 3. Show affected tests
+(tf/print-tests (:tests selection) :format :namespaces)
+
+;; 4. Run the tests (external - use your test runner)
+;; ... run tests ...
+
+;; 5. Mark verified after tests pass
+(tf/mark-verified! selection)  ; Mark all selected tests
+;; or
+(tf/mark-verified! selection [my.app-test/foo-test])  ; Mark subset
 ----
 
 === Integration with Test Runners
@@ -189,21 +261,31 @@ fi
 
 [source,bash]
 ----
-# 1. Initial analysis (run once or after major changes)
+# 1. Analyze current codebase
 clojure -M:cli analyze
 
 # 2. Make code changes
 # ... edit files ...
 
-# 3. Commit changes
-git add .
-git commit -m "Added feature X"
+# 3. Analyze again to capture changes
+clojure -M:cli analyze
 
-# 4. Select and view affected tests
+# 4. Select affected tests
 clojure -M:cli select -v
 
 # 5. Run only affected tests
 clojure -M:cli select -o kaocha | xargs clojure -M:kaocha
+
+# 6. If tests pass, mark as verified
+clojure -M:cli mark-verified
+
+# 7. Continue development
+# ... edit more files ...
+
+# 8. Next iteration - analyze and select again
+clojure -M:cli analyze
+clojure -M:cli select -v
+# ... only new changes will trigger tests ...
 ----
 
 === CI/CD Integration
@@ -213,22 +295,29 @@ clojure -M:cli select -o kaocha | xargs clojure -M:kaocha
 #!/bin/bash
 # In your CI pipeline
 
-# Cache the analysis from main branch
-git checkout main
+# Analyze current PR branch
 clojure -M:cli analyze
 
-# Checkout PR branch
-git checkout $PR_BRANCH
-
-# Select and run affected tests
+# Select affected tests (compares against success cache from main)
 TESTS=$(clojure -M:cli select -o namespaces)
+
 if [ -n "$TESTS" ]; then
   echo "Running affected tests: $TESTS"
   clojure -M:kaocha --focus $TESTS
+  
+  # If tests pass, update success cache
+  if [ $? -eq 0 ]; then
+    clojure -M:cli mark-verified
+    # Commit updated success cache to track verified state
+    git add .test-filter-success.edn
+    git commit -m "Update verified test baseline"
+  fi
 else
   echo "No tests affected by changes"
 fi
 ----
+
+NOTE: The `.test-filter-success.edn` file should be committed to your repository to track the verified baseline across CI runs. The `.test-filter-cache.edn` file is ephemeral and should be in `.gitignore`.
 
 == Advanced Features
 
@@ -296,6 +385,26 @@ Test Filter properly handles Clojure Common (`.cljc`) files with reader conditio
 
 == Architecture
 
+=== Content-Hash Based Change Detection
+
+Test Filter uses a sophisticated approach to detect which code changes actually require testing:
+
+1. **Parse with EDN reader**: Uses `clojure.tools.reader` to parse code as data structures
+2. **Strip docstrings**: Removes documentation strings from function definitions
+3. **Normalize formatting**: Uses `pr-str` to get consistent formatting regardless of whitespace/indentation
+4. **Generate SHA256 hash**: Creates a unique hash representing the function's logic
+5. **Cache hashes**: Stores hashes alongside the dependency graph
+6. **Compare on change**: When files change, re-analyze and compare new hashes to cached ones
+7. **Identify real changes**: Only symbols with different hashes are considered "changed"
+
+This means:
+
+* ✓ Adding/changing docstrings doesn't trigger tests
+* ✓ Reformatting code doesn't trigger tests
+* ✓ Reordering functions doesn't trigger tests
+* ✓ Adding comments doesn't trigger tests
+* ✓ Only actual logic changes trigger the appropriate tests
+
 === Components
 
 [cols="1,3"]
@@ -308,11 +417,14 @@ Test Filter properly handles Clojure Common (`.cljc`) files with reader conditio
 |**Graph** (`graph.clj`)
 |Builds directed dependency graph using Loom library; provides traversal operations
 
+|**Content** (`content.clj`)
+|Extracts function bodies, normalizes them (strips docstrings/whitespace), and generates SHA256 hashes for semantic comparison
+
 |**Git** (`git.clj`)
-|Wraps git commands to detect changes between revisions; parses unified diff format
+|Wraps git commands to detect which files changed between revisions
 
 |**Cache** (`cache.clj`)
-|Persists graph to EDN format; handles incremental updates and cache invalidation
+|Persists graph and content hashes to EDN format; handles incremental updates and cache invalidation
 
 |**Core** (`core.clj`)
 |Main test selection algorithm; coordinates all components
@@ -347,16 +459,43 @@ Test Filter properly handles Clojure Common (`.cljc`) files with reader conditio
  :context 'my.ns/foo}
 ----
 
-==== Cache Structure
+==== Analysis Cache Structure
 
 [source,clojure]
 ----
-{:revision "abc123def456"
- :analyzed-at "2025-01-09T10:30:00Z"
+;; .test-filter-cache.edn (ephemeral, not committed to git)
+{:analyzed-at "2025-01-09T10:30:00Z"
+ :paths ["src/main" "src/test"]
  :nodes {symbol -> node-data}
  :edges [{:from :to :context}]
- :files {"src/my/ns.clj" {:symbols [...]
-                          :revision "abc123"}}}
+ :files {"src/my/ns.clj" {:symbols [...]}}
+ :content-hashes {my.ns/foo "sha256..."
+                  my.ns/bar "sha256..."}}
+----
+
+==== Success Cache Structure
+
+[source,clojure]
+----
+;; .test-filter-success.edn (committed to git)
+{my.ns/foo "sha256-of-verified-version..."
+ my.ns/bar "sha256-of-verified-version..."
+ my.ns-test/foo-test "sha256-of-test-when-it-passed..."}
+----
+
+==== Selection Object
+
+[source,clojure]
+----
+;; Returned by select-tests
+{:tests [my.ns-test/foo-test my.ns-test/bar-test]
+ :changed-symbols #{my.ns/foo my.ns/baz}
+ :changed-hashes {my.ns/foo "new-sha256..."
+                  my.ns/baz "new-sha256..."}
+ :graph {...}  ; Full dependency graph
+ :stats {:total-tests 12
+         :selected-tests 2
+         :changed-symbols 2}}
 ----
 
 == Project Status
@@ -376,6 +515,7 @@ All planned phases (1-9) are complete:
 * [x] Macro-based test detection (fulcro-spec)
 * [x] Integration test handling
 * [x] CLJC file support
+* [x] Content-hash based change detection (ignores formatting/docstrings)
 
 === Known Limitations
 
@@ -440,4 +580,5 @@ Built with:
 
 * https://github.com/clj-kondo/clj-kondo[clj-kondo] - Static analysis
 * https://github.com/aysylu/loom[Loom] - Graph algorithms
+* https://github.com/clojure/tools.reader[tools.reader] - EDN parsing for content hashing
 * https://clojure.org[Clojure] - The language that makes this possible

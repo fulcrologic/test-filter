@@ -29,5 +29,5 @@
 (defn parse-number
   "Parses a string to a number. Platform-specific implementation."
   [s]
-  #?(:clj (Double/parseDouble s)
+  #?(:clj (Long/parseLong s)
      :cljs (js/parseFloat s)))
