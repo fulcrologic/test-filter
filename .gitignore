@@ -6,3 +6,4 @@ scratch.clj
 .test-filter-cache.edn
 test_workflow.clj
 target
+.clojure-mcp

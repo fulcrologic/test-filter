@@ -1,20 +1,34 @@
 (ns com.fulcrologic.test-filter.utils-test
   "Tests for utility functions from CLJC file."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [fulcro-spec.core :refer [assertions specification behavior component => =fn=> =throws=>]]
             [com.fulcrologic.test-filter.utils :as utils]))
 
-(deftest test-normalize-path
-  (testing "Path normalization"
-    (is (= "/foo/bar" (utils/normalize-path "/foo//bar")))
-    (is (= "/a/b/c" (utils/normalize-path "/a///b//c")))))
+(specification "normalize-path" :group1
+               (behavior "normalizes path separators"
+                         (assertions
+                          "removes double slashes from beginning"
+                          (utils/normalize-path "/foo//bar") => "/foo/bar"
 
-(deftest test-file-extension
-  (testing "File extension extraction"
-    (is (= "clj" (utils/file-extension "foo.clj")))
-    (is (= "cljc" (utils/file-extension "bar.cljc")))
-    (is (nil? (utils/file-extension "no-extension")))))
+                          "removes multiple slashes"
+                          (utils/normalize-path "/a///b//c") => "/a/b/c")))
 
-(deftest test-join-paths
-  (testing "Path joining"
-    (is (= "foo/bar/baz" (utils/join-paths "foo" "bar" "baz")))
-    (is (= "a/b/c" (utils/join-paths "a" "b" "c")))))
+(specification "file-extension" :group2
+               (behavior "extracts file extension"
+                         (assertions
+                          "gets .clj extension"
+                          (utils/file-extension "foo.clj") => "clj"
+
+                          "gets .cljc extension"
+                          (utils/file-extension "bar.cljc") => "cljc"
+
+                          "returns nil for no extension"
+                          (utils/file-extension "no-extension") => nil)))
+
+(specification "join-paths" :group3
+               (behavior "joins path segments"
+                         (assertions
+                          "joins three segments"
+                          (utils/join-paths "foo" "bar" "baz") => "foo/bar/baz"
+
+                          "joins multiple segments"
+                          (utils/join-paths "a" "b" "c") => "a/b/c")))

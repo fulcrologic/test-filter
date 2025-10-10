@@ -8,6 +8,7 @@
     (apply k/run tests)))
 
 (comment
+  (k/run-all)
   ;; Example usage
   (run-tests!)
 

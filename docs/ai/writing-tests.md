@@ -12,7 +12,6 @@ Be sure the namespace requires the library we use for writing tests. For a test 
 
 ## Basic Rules
 
-* we run tests in groups in CI. Add a random :groupN marker on the specification, where N is between 1 and 5.
 * Cover all behaviors you can find in the source function
 * Each behavior should aim at a structure of Setup, Run, and Assert. There should be whitespace between each section to
   help visually separate the parts, and make it obvious which thing is under test. It is fine to share setup among
@@ -23,7 +22,7 @@ Be sure the namespace requires the library we use for writing tests. For a test 
 Each test is defined by a specification (a macro that outputs a clojure deftest):
 
 ```
-(specification "name of description of the thing being tested" :groupN
+(specification "name of description of the thing being tested" 
   ...)
 ```
 
@@ -31,7 +30,7 @@ the content of a specification can nest optional `component` and `behavior` sect
 one based on whichever fits the context.
 
 ```
-(specification "subject" :group2
+(specification "subject" 
    (component "description of subelement"
       ...)
 ```
@@ -40,7 +39,7 @@ when doing this nesting, the combination of the strings for each nesting level s
 sentence. For example:
 
 ```
-(specification "trim" :group1
+(specification "trim" 
   (behavior "removes whitespace from start and end."
     ...))
 ```
@@ -74,7 +73,7 @@ expression with the `component` or `behavior` wrapper:
 So, A complete test looks like this:
 
 ```
-(specification "The trim function" :group3
+(specification "The trim function" 
   (behavior "removes whitespace"
     (assertions
       "from the beginning"

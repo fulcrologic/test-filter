@@ -1,11 +1,10 @@
 (ns com.fulcrologic.test-filter.core
   "Main entry point for test selection based on source code changes."
-  (:require [com.fulcrologic.test-filter.analyzer :as analyzer]
-            [com.fulcrologic.test-filter.graph :as graph]
-            [com.fulcrologic.test-filter.git :as git]
+  (:require [clojure.string :as str]
+            [com.fulcrologic.test-filter.analyzer :as analyzer]
             [com.fulcrologic.test-filter.cache :as cache]
-            [clojure.string :as str]
-            [clojure.set :as set]))
+            [com.fulcrologic.test-filter.git :as git]
+            [com.fulcrologic.test-filter.graph :as graph]))
 
 (defn select-tests
   "Selects tests that need to run based on code changes.
@@ -36,10 +35,10 @@
    :cache-hit? boolean
    :stats {...}}"
   [& {:keys [from-revision to-revision paths force all-tests verbose]
-      :or {paths ["src"]
-           force false
-           all-tests false
-           verbose false}}]
+      :or   {paths     ["src"]
+             force     false
+             all-tests false
+             verbose   false}}]
 
   (when verbose
     (println "=== Test Selection ===")
@@ -48,100 +47,100 @@
 
   ;; Get or build the symbol graph
   (let [symbol-graph (cache/get-or-build-graph :force force :paths paths)
-        cache-hit? (and (not force) (cache/cache-valid? (cache/load-graph)))
+        cache-hit?   (and (not force) (cache/cache-valid? (cache/load-graph)))
 
-        _ (when verbose
-            (println "Cache hit:" cache-hit?)
-            (println "Graph nodes:" (count (:nodes symbol-graph)))
-            (println "Graph edges:" (count (:edges symbol-graph))))
+        _            (when verbose
+                       (println "Cache hit:" cache-hit?)
+                       (println "Graph nodes:" (count (:nodes symbol-graph)))
+                       (println "Graph edges:" (count (:edges symbol-graph))))
 
         ;; Build dependency graph
-        dep-graph (graph/build-dependency-graph symbol-graph)
+        dep-graph    (graph/build-dependency-graph symbol-graph)
 
-;; Find all test vars - get pairs of [symbol node-data]
-        test-pairs (vec (analyzer/find-test-vars symbol-graph))
+        ;; Find all test vars - get pairs of [symbol node-data]
+        test-pairs   (vec (analyzer/find-test-vars symbol-graph))
         test-symbols (map first test-pairs)
 
-        _ (when verbose
-            (println "Total tests found:" (count test-symbols)))]
+        _            (when verbose
+                       (println "Total tests found:" (count test-symbols)))]
 
     (if all-tests
       ;; Return all tests
-      {:tests test-symbols
+      {:tests           test-symbols
        :changed-symbols []
-       :graph symbol-graph
-       :cache-hit? cache-hit?
-       :stats {:total-tests (count test-symbols)
-               :selected-tests (count test-symbols)
-               :changed-symbols 0
-               :selection-reason "all-tests requested"}}
+       :graph           symbol-graph
+       :cache-hit?      cache-hit?
+       :stats           {:total-tests      (count test-symbols)
+                         :selected-tests   (count test-symbols)
+                         :changed-symbols  0
+                         :selection-reason "all-tests requested"}}
 
       ;; Determine changed symbols with smart revision detection
       (let [;; Smart revision detection
             has-uncommitted? (git/has-uncommitted-changes?)
-            current-head (git/current-revision)
+            current-head     (git/current-revision)
 
             ;; Resolve user-provided revisions or use smart defaults
             ;; If uncommitted changes: compare HEAD to working dir
             ;; If no uncommitted changes: compare HEAD^ to HEAD
-            from-rev-raw (or from-revision
-                             (if has-uncommitted?
-                               current-head
-                               "HEAD^"))
-            to-rev-raw (or to-revision
-                           (if has-uncommitted?
-                             nil ; nil means working directory
-                             current-head))
+            from-rev-raw     (or from-revision
+                               (if has-uncommitted?
+                                 current-head
+                                 "HEAD^"))
+            to-rev-raw       (or to-revision
+                               (if has-uncommitted?
+                                 nil                        ; nil means working directory
+                                 current-head))
 
             ;; Resolve revision references to full SHAs (except nil for working dir)
-            from-rev (if (string? from-rev-raw)
-                       (git/resolve-revision from-rev-raw)
-                       from-rev-raw)
-            to-rev (if (string? to-rev-raw)
-                     (git/resolve-revision to-rev-raw)
-                     to-rev-raw)
+            from-rev         (if (string? from-rev-raw)
+                               (git/resolve-revision from-rev-raw)
+                               from-rev-raw)
+            to-rev           (if (string? to-rev-raw)
+                               (git/resolve-revision to-rev-raw)
+                               to-rev-raw)
 
-            _ (when verbose
-                (println "Uncommitted changes detected:" has-uncommitted?)
-                (when from-revision
-                  (println "User-specified from-revision:" from-revision "resolved to:" from-rev))
-                (when to-revision
-                  (println "User-specified to-revision:" to-revision "resolved to:" (or to-rev "working directory")))
-                (println "Comparing revisions:")
-                (println "  From:" from-rev)
-                (println "  To:" (or to-rev "working directory")))
+            _                (when verbose
+                               (println "Uncommitted changes detected:" has-uncommitted?)
+                               (when from-revision
+                                 (println "User-specified from-revision:" from-revision "resolved to:" from-rev))
+                               (when to-revision
+                                 (println "User-specified to-revision:" to-revision "resolved to:" (or to-rev "working directory")))
+                               (println "Comparing revisions:")
+                               (println "  From:" from-rev)
+                               (println "  To:" (or to-rev "working directory")))
 
             ;; Find changed symbols
-            changed-symbols (git/find-changed-symbols symbol-graph from-rev to-rev)
+            changed-symbols  (git/find-changed-symbols symbol-graph from-rev to-rev)
 
-            _ (when verbose
-                (println "Changed symbols:" (count changed-symbols))
-                (when (seq changed-symbols)
-                  (doseq [sym (take 10 changed-symbols)]
-                    (println "  -" sym))
-                  (when (> (count changed-symbols) 10)
-                    (println "  ... and" (- (count changed-symbols) 10) "more"))))
+            _                (when verbose
+                               (println "Changed symbols:" (count changed-symbols))
+                               (when (seq changed-symbols)
+                                 (doseq [sym (take 10 changed-symbols)]
+                                   (println "  -" sym))
+                                 (when (> (count changed-symbols) 10)
+                                   (println "  ... and" (- (count changed-symbols) 10) "more"))))
 
             ;; Find affected tests
-            affected-tests (if (empty? changed-symbols)
-                             []
-                             (graph/find-affected-tests dep-graph test-pairs changed-symbols symbol-graph))
+            affected-tests   (if (empty? changed-symbols)
+                               []
+                               (graph/find-affected-tests dep-graph test-pairs changed-symbols symbol-graph))
 
-            _ (when verbose
-                (println "Affected tests:" (count affected-tests)))]
+            _                (when verbose
+                               (println "Affected tests:" (count affected-tests)))]
 
-        {:tests affected-tests
+        {:tests           affected-tests
          :changed-symbols changed-symbols
-         :graph symbol-graph
-         :cache-hit? cache-hit?
-         :stats {:total-tests (count test-symbols)
-                 :selected-tests (count affected-tests)
-                 :changed-symbols (count changed-symbols)
-                 :selection-rate (if (pos? (count test-symbols))
-                                   (format "%.1f%%"
-                                           (* 100.0 (/ (count affected-tests)
-                                                       (count test-symbols))))
-                                   "N/A")}}))))
+         :graph           symbol-graph
+         :cache-hit?      cache-hit?
+         :stats           {:total-tests     (count test-symbols)
+                           :selected-tests  (count affected-tests)
+                           :changed-symbols (count changed-symbols)
+                           :selection-rate  (if (pos? (count test-symbols))
+                                              (format "%.1f%%"
+                                                (* 100.0 (/ (count affected-tests)
+                                                           (count test-symbols))))
+                                              "N/A")}}))))
 
 (defn analyze!
   "Analyzes the codebase and builds/updates the cache.
@@ -153,9 +152,9 @@
 
   Returns the built symbol graph."
   [& {:keys [paths force verbose]
-      :or {paths ["src"]
-           force false
-           verbose true}}]
+      :or   {paths   ["src"]
+             force   false
+             verbose true}}]
 
   (when verbose
     (println "=== Analyzing Codebase ===")
@@ -163,10 +162,10 @@
     (println "Force rebuild:" force))
 
   (let [start-time (System/currentTimeMillis)
-        graph (cache/get-or-build-graph :force force :paths paths)
-        elapsed (- (System/currentTimeMillis) start-time)
+        graph      (cache/get-or-build-graph :force force :paths paths)
+        elapsed    (- (System/currentTimeMillis) start-time)
 
-        stats (graph/graph-stats (graph/build-dependency-graph graph))
+        stats      (graph/graph-stats (graph/build-dependency-graph graph))
         test-count (count (analyzer/find-test-vars graph))]
 
     (when verbose
@@ -191,16 +190,16 @@
   (case format
     :namespaces
     (->> test-symbols
-         (map namespace)
-         (distinct)
-         (sort))
+      (map namespace)
+      (distinct)
+      (sort))
 
     :kaocha
     (->> test-symbols
-         (map namespace)
-         (distinct)
-         (map #(str "--focus " %))
-         (str/join " "))
+      (map namespace)
+      (distinct)
+      (map #(str "--focus " %))
+      (str/join " "))
 
     :vars
     (sort test-symbols)

@@ -2,41 +2,57 @@
   "Integration test for cache operations.
 
   This should be detected as an integration test by namespace pattern."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [fulcro-spec.core :refer [assertions specification behavior component => =fn=> =throws=>]]
             [com.fulcrologic.test-filter.cache :as cache]
             [com.fulcrologic.test-filter.analyzer :as analyzer]
             [com.fulcrologic.test-filter.git :as git]))
 
-(deftest ^{:test-targets #{com.fulcrologic.test-filter.cache/save-graph!
-                           com.fulcrologic.test-filter.cache/load-graph}}
-  test-cache-roundtrip
-  "Tests that we can save and load a graph.
-  This test has explicit :test-targets metadata."
-  (testing "Cache save and load cycle"
-    (let [;; Build a simple graph
-          analysis (analyzer/run-analysis {:paths ["src/main"]})
-          symbol-graph (analyzer/build-symbol-graph analysis)
-          revision (git/current-revision)
+(specification "cache roundtrip" :group3
+               {:test-targets #{com.fulcrologic.test-filter.cache/save-graph!
+                                com.fulcrologic.test-filter.cache/load-graph}}
+               (behavior "saves and loads a graph with explicit :test-targets metadata"
+                         (let [;; Setup: Build a simple graph
+                               analysis (analyzer/run-analysis {:paths ["src/main"]})
+                               symbol-graph (analyzer/build-symbol-graph analysis)
+                               revision (git/current-revision)]
 
-          ;; Save it
-          _ (cache/save-graph! symbol-graph revision)
+      ;; Run: Save it
+                           (cache/save-graph! symbol-graph revision)
 
-          ;; Load it back
-          loaded (cache/load-graph)]
+      ;; Run: Load it back
+                           (let [loaded (cache/load-graph)]
 
-      (is (some? loaded) "Cache should load successfully")
-      (is (= revision (:revision loaded)) "Revision should match")
-      (is (map? (:nodes loaded)) "Should have nodes map")
-      (is (sequential? (:edges loaded)) "Should have edges vector"))))
+        ;; Assert
+                             (assertions
+                              "cache loads successfully"
+                              (some? loaded) => true
 
-(deftest test-full-cache-workflow
-  "Integration test without explicit targets.
-  Should run conservatively since it's in .integration. namespace."
-  (testing "Full workflow: analyze, save, load, invalidate"
-    (let [graph (cache/get-or-build-graph :force true :paths ["src/main"])]
-      (is (some? graph) "Should get a graph")
-      (is (pos? (count (:nodes graph))) "Should have nodes")
+                              "revision matches"
+                              (:revision loaded) => revision
 
-      ;; Clear cache
-      (cache/invalidate-cache!)
-      (is (nil? (cache/load-graph)) "Cache should be cleared"))))
+                              "has nodes map"
+                              (map? (:nodes loaded)) => true
+
+                              "has edges vector"
+                              (sequential? (:edges loaded)) => true)))))
+
+(specification "full cache workflow" :group4
+               (behavior "runs full workflow without explicit targets (conservative integration test)"
+    ;; Setup: Get or build graph
+                         (let [graph (cache/get-or-build-graph :force true :paths ["src/main"])]
+
+      ;; Assert: Graph is valid
+                           (assertions
+                            "gets a graph"
+                            (some? graph) => true
+
+                            "has nodes"
+                            (pos? (count (:nodes graph))) => true))
+
+    ;; Run: Clear cache
+                         (cache/invalidate-cache!)
+
+    ;; Assert: Cache is cleared
+                         (assertions
+                          "cache is cleared"
+                          (cache/load-graph) => nil)))

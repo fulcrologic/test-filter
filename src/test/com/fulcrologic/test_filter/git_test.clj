@@ -1,27 +1,47 @@
 (ns com.fulcrologic.test-filter.git-test
-  (:require [clojure.test :refer [deftest is testing]]
-            [com.fulcrologic.test-filter.git :as git]))
+  (:require [com.fulcrologic.test-filter.git :as git]
+            [fulcro-spec.core :refer [=> assertions behavior component specification]]))
 
-(deftest test-current-revision
-  (testing "Getting current git revision"
+(specification "current-revision" :group1
+  (behavior "gets current git revision"
     (let [rev (git/current-revision)]
-      (is (string? rev))
-      (is (= 40 (count rev)))
-      (is (re-matches #"[0-9a-f]{40}" rev)))))
 
-(deftest test-has-uncommitted-changes
-  (testing "Detecting uncommitted changes"
+      (assertions
+        "returns a string"
+        (string? rev) => true
+
+        "is 40 characters long"
+        (count rev) => 40
+
+        "matches SHA-1 pattern"
+        (re-matches #"[0-9a-f]{40}" rev) => rev))))
+
+(specification "has-uncommitted-changes?" :group2
+  (behavior "detects uncommitted changes"
     (let [result (git/has-uncommitted-changes?)]
-      (is (boolean? result)))))
 
-(deftest test-resolve-revision
-  (testing "Resolving revision references"
+      (assertions
+        "returns a boolean"
+        (boolean? result) => true))))
+
+(specification "resolve-revision" :group3
+  (behavior "resolves revision references"
     (let [head (git/resolve-revision "HEAD")]
-      (is (string? head))
-      (is (= 40 (count head))))
 
-    (testing "HEAD^ resolves to parent commit"
-      (let [head (git/resolve-revision "HEAD")
+      (assertions
+        "HEAD returns a string"
+        (string? head) => true
+
+        "HEAD is 40 characters"
+        (count head) => 40))
+
+    (component "HEAD^ resolves to parent commit"
+      (let [head   (git/resolve-revision "HEAD")
             parent (git/resolve-revision "HEAD^")]
-        (is (not= head parent))
-        (is (= 40 (count parent)))))))
+
+        (assertions
+          "parent is different from HEAD"
+          (not= head parent) => true
+
+          "parent is 40 characters"
+          (count parent) => 40)))))
