@@ -1,4 +1,4 @@
-(ns test-filter.git
+(ns com.fulcrologic.test-filter.git
   "Git operations for detecting code changes between revisions."
   (:require [clojure.java.shell :as shell]
             [clojure.string :as str]
@@ -10,7 +10,7 @@
 
 (defn current-revision
   "Returns the current git revision (commit SHA).
-  
+
   This function retrieves the full 40-character SHA hash of the current HEAD commit."
   []
   (let [result (shell/sh "git" "rev-parse" "HEAD")]
@@ -22,13 +22,13 @@
 
 (defn resolve-revision
   "Resolves a git revision reference (partial SHA, branch name, tag, etc.) to a full SHA.
-  
+
   Examples:
     (resolve-revision \"abc123\")     ; partial SHA
     (resolve-revision \"HEAD~3\")     ; relative reference
     (resolve-revision \"main\")       ; branch name
     (resolve-revision \"v1.0.0\")     ; tag
-  
+
   Returns the full commit SHA."
   [rev-spec]
   (let [result (shell/sh "git" "rev-parse" rev-spec)]
@@ -198,7 +198,7 @@
   (changed-files "HEAD~1")
   ;; => ["src/main/test_filter/analyzer.clj" "src/main/test_filter/git.clj"]
 
-  (require '[test-filter.analyzer :as analyzer])
+  (require '[com.fulcrologic.test-filter.analyzer :as analyzer])
   (def graph (analyzer/build-symbol-graph (analyzer/run-analysis {:paths ["src"]})))
 
   (find-changed-symbols graph "HEAD~1")

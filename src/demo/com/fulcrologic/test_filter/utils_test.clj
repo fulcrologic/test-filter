@@ -1,7 +1,7 @@
-(ns test-filter.utils-test
+(ns com.fulcrologic.test-filter.utils-test
   "Tests for utility functions from CLJC file."
   (:require [clojure.test :refer [deftest is testing]]
-            [test-filter.utils :as utils]))
+            [com.fulcrologic.test-filter.utils :as utils]))
 
 (deftest test-normalize-path
   (testing "Path normalization"

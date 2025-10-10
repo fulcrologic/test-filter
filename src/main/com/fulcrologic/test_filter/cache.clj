@@ -1,9 +1,9 @@
-(ns test-filter.cache
+(ns com.fulcrologic.test-filter.cache
   "Persistence and caching of symbol graphs with git revision tracking."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [test-filter.analyzer :as analyzer]
-            [test-filter.git :as git])
+            [com.fulcrologic.test-filter.analyzer :as analyzer]
+            [com.fulcrologic.test-filter.git :as git])
   (:import [java.time Instant]))
 
 (def ^:dynamic *cache-file* ".test-filter-cache.edn")
@@ -15,7 +15,7 @@
 
 (defn save-graph!
   "Persists a symbol graph to disk with revision metadata.
-  
+
   Graph structure:
   {:revision \"abc123...\"
    :analyzed-at \"2024-...\"  ; ISO-8601 string
@@ -64,14 +64,14 @@
 
 (defn incremental-update
   "Updates a cached graph by re-analyzing only changed files.
-  
+
   Steps:
   1. Find files changed since cache
   2. Re-analyze those files
   3. Remove old symbols from those files
   4. Add new symbols from analysis
   5. Update revision
-  
+
   Returns updated graph."
   [{:keys [nodes edges files] :as cached-graph} changed-file-set]
   (if (empty? changed-file-set)
@@ -106,12 +106,12 @@
 
 (defn get-or-build-graph
   "Gets cached graph if valid, otherwise builds a fresh one.
-  
+
   Options:
   - :force - Force rebuild even if cache is valid
   - :incremental - Try incremental update if cache is stale (default true)
   - :paths - Paths to analyze (default [\"src\"])
-  
+
   Returns symbol graph with metadata."
   [& {:keys [force incremental paths]
       :or {incremental true

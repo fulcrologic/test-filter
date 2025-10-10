@@ -1,15 +1,15 @@
-(ns test-filter.core
+(ns com.fulcrologic.test-filter.core
   "Main entry point for test selection based on source code changes."
-  (:require [test-filter.analyzer :as analyzer]
-            [test-filter.graph :as graph]
-            [test-filter.git :as git]
-            [test-filter.cache :as cache]
+  (:require [com.fulcrologic.test-filter.analyzer :as analyzer]
+            [com.fulcrologic.test-filter.graph :as graph]
+            [com.fulcrologic.test-filter.git :as git]
+            [com.fulcrologic.test-filter.cache :as cache]
             [clojure.string :as str]
             [clojure.set :as set]))
 
 (defn select-tests
   "Selects tests that need to run based on code changes.
-  
+
   Options:
   - :from-revision - Compare against specific git revision (partial SHA, branch, tag, or ref like HEAD~3)
   - :to-revision - Compare to specific revision (partial SHA, branch, tag, ref, or nil for working directory)
@@ -17,18 +17,18 @@
   - :force - Force full re-analysis (default: false)
   - :all-tests - Return all tests regardless of changes (default: false)
   - :verbose - Print diagnostic information (default: false)
-  
+
   Smart revision detection (when from/to not specified):
   - If uncommitted changes exist: compare HEAD to working directory
   - If no uncommitted changes: compare HEAD^ to HEAD
-  
+
   Revision references support:
   - Full SHA: \"dfd50cb754237161ec6ee4b86f7bb35a21ad4565\"
   - Partial SHA: \"dfd50cb\" (will be resolved to full SHA)
   - Branch name: \"main\", \"feature-branch\"
   - Tag: \"v1.0.0\"
   - Relative refs: \"HEAD^\", \"HEAD~3\", \"main~5\"
-  
+
   Returns:
   {:tests [test-symbols]
    :changed-symbols [changed-symbols]
@@ -145,12 +145,12 @@
 
 (defn analyze!
   "Analyzes the codebase and builds/updates the cache.
-  
+
   Options:
   - :paths - Paths to analyze (default: [\"src\"])
   - :force - Force full rebuild (default: false)
   - :verbose - Print diagnostic information (default: true)
-  
+
   Returns the built symbol graph."
   [& {:keys [paths force verbose]
       :or {paths ["src"]
@@ -182,7 +182,7 @@
 
 (defn format-test-output
   "Formats selected tests for output.
-  
+
   Format options:
   - :namespaces - List of unique test namespaces
   - :vars - List of fully-qualified test vars (default)
@@ -210,7 +210,7 @@
 
 (defn print-tests
   "Prints selected tests in the specified format.
-  
+
   Format options:
   - :namespaces - One namespace per line
   - :vars - One fully-qualified var per line (default)

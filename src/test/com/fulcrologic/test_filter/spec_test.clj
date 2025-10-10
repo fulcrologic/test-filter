@@ -1,7 +1,7 @@
-(ns test-filter.spec-test
+(ns com.fulcrologic.test-filter.spec-test
   "Example test using fulcro-spec to verify macro test detection."
   (:require [fulcro-spec.core :refer [specification behavior assertions =>]]
-            [test-filter.git :as git]))
+            [com.fulcrologic.test-filter.git :as git]))
 
 (specification "Git operations" :group1
                (behavior "can get current revision"

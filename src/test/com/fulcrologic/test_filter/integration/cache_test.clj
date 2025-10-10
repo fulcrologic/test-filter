@@ -1,11 +1,11 @@
-(ns test-filter.integration.cache-test
-  "Integration test for cache operations. 
-  
+(ns com.fulcrologic.test-filter.integration.cache-test
+  "Integration test for cache operations.
+
   This should be detected as an integration test by namespace pattern."
   (:require [clojure.test :refer [deftest is testing]]
-            [test-filter.cache :as cache]
-            [test-filter.analyzer :as analyzer]
-            [test-filter.git :as git]))
+            [com.fulcrologic.test-filter.cache :as cache]
+            [com.fulcrologic.test-filter.analyzer :as analyzer]
+            [com.fulcrologic.test-filter.git :as git]))
 
 (deftest ^{:test-targets #{test-filter.cache/save-graph!
                            test-filter.cache/load-graph}}

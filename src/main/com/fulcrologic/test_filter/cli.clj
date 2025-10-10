@@ -1,7 +1,7 @@
-(ns test-filter.cli
+(ns com.fulcrologic.test-filter.cli
   "Command-line interface for test-filter."
-  (:require [test-filter.core :as core]
-            [test-filter.cache :as cache]
+  (:require [com.fulcrologic.test-filter.core :as core]
+            [com.fulcrologic.test-filter.cache :as cache]
             [clojure.tools.cli :as cli]
             [clojure.string :as str])
   (:gen-class))

@@ -1,4 +1,4 @@
-(ns test-filter.analyzer
+(ns com.fulcrologic.test-filter.analyzer
   "Analyzes Clojure source code using clj-kondo to build a symbol dependency graph."
   (:require [clj-kondo.core :as clj-kondo]
             [clojure.string :as str]))
@@ -38,7 +38,7 @@
 
 (defn extract-test-metadata
   "Extracts test-related metadata from a var definition.
-  
+
   Returns a map with:
     :test-targets - Set of symbols this test explicitly targets (from metadata)
     :integration? - True if this appears to be an integration test"
@@ -177,10 +177,10 @@
 
 (defn find-macro-tests
   "Find tests defined by macros like fulcro-spec's specification.
-  
+
   Returns a map of pseudo-test-vars in the same format as regular test vars,
   using the namespace as the test symbol since macro calls don't create var definitions.
-  
+
   Args:
     analysis - clj-kondo analysis result
     test-macros - Set of qualified macro symbols to treat as test definers

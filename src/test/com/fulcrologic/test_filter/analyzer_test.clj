@@ -1,6 +1,6 @@
-(ns test-filter.analyzer-test
+(ns com.fulcrologic.test-filter.analyzer-test
   (:require [clojure.test :refer [deftest is testing]]
-            [test-filter.analyzer :as analyzer]))
+            [com.fulcrologic.test-filter.analyzer :as analyzer]))
 
 (deftest test-run-analysis
   (testing "Analyzer can run clj-kondo and parse results"

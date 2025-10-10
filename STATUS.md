@@ -39,7 +39,7 @@
 
 ```clojure
 ;; Load the core namespace
-(require '[test-filter.core :as core])
+(require '[com.fulcrologic.test-filter.core :as core])
 
 ;; Analyze the codebase and build cache
 (core/analyze!)

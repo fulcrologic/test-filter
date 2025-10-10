@@ -1,6 +1,6 @@
-(ns test-filter.git-test
+(ns com.fulcrologic.test-filter.git-test
   (:require [clojure.test :refer [deftest is testing]]
-            [test-filter.git :as git]))
+            [com.fulcrologic.test-filter.git :as git]))
 
 (deftest test-current-revision
   (testing "Getting current git revision"

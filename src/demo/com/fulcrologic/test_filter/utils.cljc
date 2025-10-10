@@ -1,4 +1,4 @@
-(ns test-filter.utils
+(ns com.fulcrologic.test-filter.utils
   "Utility functions that work in both Clojure and ClojureScript.
   This file tests CLJC support.")
 

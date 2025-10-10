@@ -51,9 +51,9 @@ Add to your `deps.edn`:
 
 [source,clojure]
 ----
-{:deps {test-filter/test-filter {:git/url "https://github.com/yourusername/test-filter"
-                                  :sha "..."}}
+{:deps {com.fulcrologic/test-filter {:mvn/version "1.0.0" }}
 
+ ;; optional
  :aliases
  {:cli {:main-opts ["-m" "test-filter.cli"]}}}
 ----
@@ -142,7 +142,7 @@ Use Test Filter from the REPL or your code:
 
 [source,clojure]
 ----
-(require '[test-filter.core :as core])
+(require '[com.fulcrologic.test-filter.core :as core])
 
 ;; Analyze the codebase and build cache
 (core/analyze!)

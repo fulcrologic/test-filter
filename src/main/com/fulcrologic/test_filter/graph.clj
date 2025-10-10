@@ -1,4 +1,4 @@
-(ns test-filter.graph
+(ns com.fulcrologic.test-filter.graph
   "Graph operations for dependency analysis and test selection."
   (:require [loom.graph :as lg]
             [loom.alg :as alg]
@@ -66,7 +66,7 @@
 (defn find-affected-tests
   "Given a set of changed symbols and a dependency graph,
   returns the set of test symbols that transitively depend on any changed symbol.
-  
+
   Handles integration tests specially:
   - If a test has :test-targets metadata, only run if those targets changed
   - If a test is marked :integration? but has no targets, run conservatively (always)
@@ -123,7 +123,7 @@
 
 (comment
   ;; Example usage with analyzer:
-  (require '[test-filter.analyzer :as analyzer])
+  (require '[com.fulcrologic.test-filter.analyzer :as analyzer])
 
   (def analysis (analyzer/run-analysis {:paths ["src/main"]}))
   (def symbol-graph (analyzer/build-symbol-graph analysis))
