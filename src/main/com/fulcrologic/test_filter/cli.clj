@@ -1,9 +1,9 @@
 (ns com.fulcrologic.test-filter.cli
   "Command-line interface for test-filter."
-  (:require [com.fulcrologic.test-filter.core :as core]
-            [com.fulcrologic.test-filter.cache :as cache]
+  (:require [clojure.string :as str]
             [clojure.tools.cli :as cli]
-            [clojure.string :as str])
+            [com.fulcrologic.test-filter.cache :as cache]
+            [com.fulcrologic.test-filter.core :as core])
   (:gen-class))
 
 (def cli-options
@@ -11,11 +11,9 @@
     :default ["src"]
     :parse-fn #(str/split % #",")]
 
-   ["-f" "--force" "Force full re-analysis, ignore cache"]
-
    ["-v" "--verbose" "Print verbose diagnostic information"]
 
-   ["-a" "--all" "Select all tests regardless of changes"]
+   ["-a" "--all" "For select: return all tests. For clear/mark-verified: apply to all caches/tests"]
 
    ["-o" "--format FORMAT" "Output format: vars, namespaces, or kaocha"
     :default :vars
@@ -23,50 +21,63 @@
     :validate [#{:vars :namespaces :kaocha}
                "Must be one of: vars, namespaces, kaocha"]]
 
+   ["-t" "--tests TESTS" "For mark-verified: comma-separated list of test symbols to mark"
+    :parse-fn #(map symbol (str/split % #","))]
+
    ["-h" "--help" "Show this help message"]])
 
 (defn usage [options-summary]
   (->> ["Test Filter - Intelligent test selection based on source code changes"
         ""
-        "Usage: clojure -M -m test-filter.cli [command] [options]"
+        "Usage: clojure -M:cli [command] [options]"
         ""
         "Commands:"
-        "  analyze    Analyze codebase and build/update cache"
-        "  select     Select tests to run based on changes"
-        "  clear      Clear the analysis cache"
-        "  status     Show cache status"
+        "  analyze        Analyze codebase and update analysis cache"
+        "  select         Select tests to run based on changes"
+        "  mark-verified  Mark tests as verified (updates success cache)"
+        "  clear          Clear cache(s)"
+        "  status         Show cache status"
         ""
         "Options:"
         options-summary
         ""
         "Examples:"
         "  # Analyze codebase and cache results"
-        "  clojure -M -m test-filter.cli analyze"
+        "  clojure -M:cli analyze"
         ""
         "  # Select tests affected by changes since last analysis"
-        "  clojure -M -m test-filter.cli select"
+        "  clojure -M:cli select"
         ""
         "  # Select tests with verbose output"
-        "  clojure -M -m test-filter.cli select -v"
+        "  clojure -M:cli select -v"
         ""
-        "  # Force re-analysis and select all tests"
-        "  clojure -M -m test-filter.cli select --force --all"
+        "  # Select all tests regardless of changes"
+        "  clojure -M:cli select --all"
         ""
         "  # Output test namespaces (one per line)"
-        "  clojure -M -m test-filter.cli select -o namespaces"
+        "  clojure -M:cli select -o namespaces"
         ""
         "  # Output as Kaocha arguments"
-        "  clojure -M -m test-filter.cli select -o kaocha"
+        "  clojure -M:cli select -o kaocha"
         ""
-        "  # Clear cache"
-        "  clojure -M -m test-filter.cli clear"
+        "  # Mark all selected tests as verified"
+        "  clojure -M:cli mark-verified"
+        ""
+        "  # Mark specific tests as verified"
+        "  clojure -M:cli mark-verified -t my.app/test1,my.app/test2"
+        ""
+        "  # Clear analysis cache only"
+        "  clojure -M:cli clear"
+        ""
+        "  # Clear both analysis and success caches"
+        "  clojure -M:cli clear --all"
         ""
         "For more information, see: https://github.com/your-org/test-filter"]
-       (str/join \newline)))
+    (str/join \newline)))
 
 (defn error-msg [errors]
   (str "The following errors occurred while parsing your command:\n\n"
-       (str/join \newline errors)))
+    (str/join \newline errors)))
 
 (defn validate-args
   "Validate command line arguments. Returns a map with either :action, :options,
@@ -82,21 +93,20 @@
 
       (empty? arguments)
       {:action :error
-       :errors ["No command specified. Use 'analyze', 'select', 'clear', or 'status'."]}
+       :errors ["No command specified. Use 'analyze', 'select', 'mark-verified', 'clear', or 'status'."]}
 
-      (not (#{"analyze" "select" "clear" "status"} (first arguments)))
+      (not (#{"analyze" "select" "mark-verified" "clear" "status"} (first arguments)))
       {:action :error
        :errors [(str "Unknown command: " (first arguments))]}
 
       :else
-      {:action (keyword (first arguments))
+      {:action  (keyword (first arguments))
        :options options})))
 
 (defn run-analyze [options]
   (try
     (core/analyze! :paths (:paths options)
-                   :force (:force options)
-                   :verbose (or (:verbose options) true))
+      :verbose (or (:verbose options) true))
     0
     (catch Exception e
       (println "Error during analysis:" (.getMessage e))
@@ -106,11 +116,10 @@
 
 (defn run-select [options]
   (try
-    (let [result (core/select-tests
-                  :paths (:paths options)
-                  :force (:force options)
-                  :all-tests (:all options)
-                  :verbose (:verbose options))
+    (let [result       (core/select-tests
+                         :paths (:paths options)
+                         :all-tests (:all options)
+                         :verbose (:verbose options))
           test-symbols (:tests result)]
 
       (when (:verbose options)
@@ -135,38 +144,107 @@
 
 (defn run-clear [options]
   (try
-    (if (cache/invalidate-cache!)
-      (println "Cache cleared successfully.")
-      (println "No cache found."))
+    (if (:all options)
+      ;; Clear both caches
+      (do
+        (cache/invalidate-all-caches!)
+        (println "Both analysis and success caches cleared."))
+      ;; Clear only analysis cache
+      (if (cache/invalidate-cache!)
+        (println "Analysis cache cleared.")
+        (println "No analysis cache found.")))
     0
     (catch Exception e
       (println "Error clearing cache:" (.getMessage e))
       1)))
 
+(defn run-mark-verified [options]
+  (try
+    ;; Need to get the last selection result
+    ;; For CLI, we'll re-run select-tests to get the selection
+    (let [selection       (core/select-tests
+                            :paths (:paths options)
+                            :verbose (:verbose options))
+          test-symbols    (:tests selection)
+          changed-symbols (:changed-symbols selection)]
+
+      (if (empty? changed-symbols)
+        (do
+          (println "No changed symbols to verify.")
+          0)
+        (let [tests-to-mark (cond
+                              ;; User specified specific tests
+                              (:tests options)
+                              (vec (:tests options))
+
+                              ;; Mark all by default
+                              :else
+                              :all)
+
+              result        (core/mark-verified! selection tests-to-mark)]
+
+          (println "=== Verification Complete ===")
+          (println "Verified symbols:" (count (:verified-symbols result)))
+          (when (seq (:skipped-symbols result))
+            (println "Skipped symbols:" (count (:skipped-symbols result)))
+            (println "  (not fully covered by specified tests)"))
+
+          (when (:verbose options)
+            (println "\nVerified symbols:")
+            (doseq [sym (:verified-symbols result)]
+              (println "  ✓" sym))
+            (when (seq (:skipped-symbols result))
+              (println "\nSkipped symbols:")
+              (doseq [sym (:skipped-symbols result)]
+                (println "  -" sym))))
+
+          0)))
+    (catch Exception e
+      (println "Error marking tests as verified:" (.getMessage e))
+      (when (:verbose options)
+        (.printStackTrace e))
+      1)))
+
 (defn run-status [options]
   (try
-    (let [cached (cache/load-graph)]
-      (if cached
+    (let [status         (cache/cache-status)
+          analysis-cache (:analysis-cache status)
+          success-cache  (:success-cache status)]
+
+      (println "=== Cache Status ===")
+      (println)
+      (println "Analysis Cache:")
+      (println "  Path:" (:path analysis-cache))
+      (if (:exists? analysis-cache)
         (do
-          (println "=== Cache Status ===")
-          (println "Cache file:" (cache/cache-path))
-          (println "Cached revision:" (:revision cached))
-          (println "Analyzed at:" (:analyzed-at cached))
-          (println "Total symbols:" (count (:nodes cached)))
-          (println "Dependencies:" (count (:edges cached)))
-          (println "Files analyzed:" (count (:files cached)))
+          (println "  Status: ✓ Exists")
+          (println "  Size:" (:size analysis-cache) "bytes")
+          (println "  Last modified:" (:last-modified analysis-cache)))
+        (println "  Status: ✗ Not found"))
+
+      (println)
+      (println "Success Cache:")
+      (println "  Path:" (:path success-cache))
+      (if (:exists? success-cache)
+        (do
+          (println "  Status: ✓ Exists")
+          (println "  Size:" (:size success-cache) "bytes")
+          (println "  Last modified:" (:last-modified success-cache))
+          (when (:verbose options)
+            (let [verified (cache/load-success-cache)]
+              (println "  Verified symbols:" (count verified)))))
+        (println "  Status: ✗ Not found"))
+
+      (when (and (:exists? analysis-cache) (:verbose options))
+        (let [cached (cache/load-graph)]
           (println)
-          (if (cache/cache-valid? cached)
-            (println "✓ Cache is valid for current revision")
-            (let [changed (cache/changed-files-since-cache cached)]
-              (println "⚠ Cache is stale")
-              (println "Changed files since cache:" (count changed))
-              (when (and (:verbose options) (seq changed))
-                (doseq [file (take 10 changed)]
-                  (println "  -" file))
-                (when (> (count changed) 10)
-                  (println "  ... and" (- (count changed) 10) "more"))))))
-        (println "No cache found. Run 'analyze' to create one."))
+          (println "Analysis Cache Details:")
+          (println "  Analyzed at:" (:analyzed-at cached))
+          (println "  Paths:" (:paths cached))
+          (println "  Total symbols:" (count (:nodes cached)))
+          (println "  Dependencies:" (count (:edges cached)))
+          (println "  Files analyzed:" (count (:files cached)))))
+
       0)
     (catch Exception e
       (println "Error checking cache status:" (.getMessage e))
@@ -192,6 +270,9 @@
 
       :select
       (System/exit (run-select options))
+
+      :mark-verified
+      (System/exit (run-mark-verified options))
 
       :clear
       (System/exit (run-clear options))

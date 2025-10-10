@@ -4,9 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Test Filter is an intelligent test selection tool for Clojure projects that uses static analysis (clj-kondo) and git history to determine the minimum set of tests needed after code changes. It builds a symbol dependency graph and walks it backwards from tests to find what needs re-running.
+Test Filter is an intelligent test selection tool for Clojure projects that uses static analysis (clj-kondo) and content-hash comparison to determine the minimum set of tests needed after code changes. It builds a symbol dependency graph and walks it backwards from tests to find what needs re-running.
 
 **Important**: This codebase and documentation was completely written by Claude Code. The original author has not verified all functionality.
+
+### Two-Cache Architecture
+
+1. **Analysis Cache** (`.test-filter-cache.edn`) - Ephemeral, NOT committed
+   - Snapshot of current codebase structure and content hashes
+   - Completely overwritten on each `analyze!` command
+   - Used to communicate between CLI steps in same session
+
+2. **Success Cache** (`.test-filter-success.edn`) - Persistent, COMMITTED
+   - Contains content hashes of successfully verified symbols
+   - Only updated by `mark-verified!` after tests pass
+   - Persists across sessions and builds
+   - This is the baseline for detecting changes
 
 ## Common Commands
 
@@ -18,40 +31,85 @@ clojure -M:dev
 # Run all tests
 clojure -M:test -m kaocha.runner
 
-# Analyze the codebase and build dependency cache
+# Analyze the codebase (overwrites analysis cache)
 clojure -M:cli analyze
 
-# Select affected tests (verbose mode shows stats)
+# Select affected tests (compares current vs success cache)
 clojure -M:cli select -v
 
 # Run only affected tests
 clojure -M:cli select -o kaocha | xargs clojure -M:test -m kaocha.runner
 
+# Mark tests as verified (updates success cache)
+clojure -M:cli mark-verified
+
 # Check cache status
 clojure -M:cli status
 
-# Clear the cache
-clojure -M:cli clear
+# Clear caches
+clojure -M:cli clear          # Clear analysis cache only
+clojure -M:cli clear --all    # Clear both caches
 ```
 
 ### REPL-Based Development
-The `src/dev/user.clj` namespace provides helper functions:
+
+#### Fast Iteration Workflow (Recommended)
+
+For the fastest iteration during development, use `patch-graph-with-local-changes` to avoid re-analysis:
+
+```clojure
+(require '[com.fulcrologic.test-filter.core :as tf])
+(require '[kaocha.repl :as k])
+
+;; 1. Analyze once per session (or when structure changes)
+(def graph (tf/analyze! :paths ["src/main" "src/demo" "src/test"]))
+
+;; 2. Fast iteration loop - edit code, save, then:
+(def selection (tf/select-tests :graph (tf/patch-graph-with-local-changes graph)))
+(apply k/run (:tests selection))
+
+;; 3. Mark as verified after tests pass
+(tf/mark-verified! selection)
+
+;; Repeat step 2 for each edit - no re-analysis needed!
+```
+
+**How it works:**
+- `patch-graph-with-local-changes` detects uncommitted files via git
+- Re-computes hashes only for symbols in changed files (fast!)
+- Merges fresh hashes into the graph
+- No I/O - graph passed directly to `select-tests`
+
+#### Cache-Based Workflow
+
+For one-off selections or when you don't have a graph in memory:
+
 ```clojure
 (require '[com.fulcrologic.test-filter.core :as tf])
 
-;; Full analysis with verbose output
+;; 1. Analyze - generates current state
 (tf/analyze! :paths ["src/main" "src/demo" "src/test"])
 
-;; Select affected tests
-(def result (tf/select-tests :verbose true))
+;; 2. Select affected tests (compares current vs success cache)
+(def selection (tf/select-tests :verbose true))
 
-;; View results
-(tf/print-tests (:tests result) :format :namespaces)
-(:stats result)
+;; View selection details
+selection
+;; => {:tests [...]
+;;     :changed-symbols #{...}
+;;     :changed-hashes {...}
+;;     :graph {...}
+;;     :stats {...}}
 
-;; Run tests using Kaocha REPL integration
+(tf/print-tests (:tests selection) :format :namespaces)
+
+;; 3. Run tests using Kaocha REPL integration
 (require '[kaocha.repl :as k])
-(apply k/run (:tests result))
+(apply k/run (:tests selection))
+
+;; 4. Mark as verified after tests pass
+(tf/mark-verified! selection)           ; Mark all selected tests
+(tf/mark-verified! selection [test-1])  ; Mark specific tests
 ```
 
 ## Architecture
@@ -70,24 +128,36 @@ The `src/dev/user.clj` namespace provides helper functions:
    - Provides transitive dependency walking to find what depends on what
    - Special handling for integration tests (namespace pattern `*.integration.*`)
 
-3. **Git** (`com.fulcrologic.test-filter.git`)
-   - Wraps git commands for revision comparisons
-   - Parses unified diff format to extract changed line ranges
-   - Maps line changes to symbol changes using the graph
-   - Supports partial SHAs, branch names, tags, and relative refs (HEAD~3)
+3. **Content** (`com.fulcrologic.test-filter.content`)
+   - Extracts function source code from files
+   - Normalizes content (strips docstrings, formatting, whitespace)
+   - Generates SHA256 hashes for semantic comparison
+   - Ignores cosmetic changes (docstrings, formatting, comments)
 
 4. **Cache** (`com.fulcrologic.test-filter.cache`)
-   - Persists graph to `.test-filter-cache.edn` with git revision
-   - Supports incremental updates (re-analyze only changed files)
-   - Cache invalidation when revision changes
+   - **Analysis Cache**: Ephemeral snapshot of current codebase state
+     - Completely overwritten on each analyze
+     - Contains graph structure and current content hashes
+   - **Success Cache**: Persistent baseline of verified symbols
+     - Only updated by `mark-verified!`
+     - Maps symbols to their last-verified content hashes
 
 5. **Core** (`com.fulcrologic.test-filter.core`)
    - Main test selection algorithm coordinating all components
-   - Smart revision detection: uncommitted changes vs. committed changes
-   - Provides `analyze!` and `select-tests` public API
+   - Public API:
+     - `analyze!` - Full analysis with clj-kondo (returns graph)
+     - `patch-graph-with-local-changes` - Fast hash updates for git-changed files
+     - `select-tests` - Test selection (accepts optional `:graph` parameter)
+     - `mark-verified!` - Update success cache after tests pass
+   - Compares current hashes vs success cache to detect changes
 
-6. **CLI** (`com.fulcrologic.test-filter.cli`)
-   - Commands: analyze, select, status, clear
+6. **Git** (`com.fulcrologic.test-filter.git`)
+   - Detects uncommitted file changes for fast iteration
+   - Used by `patch-graph-with-local-changes` to identify files needing re-hash
+   - Functions: `uncommitted-files`, `changed-files`, `has-uncommitted-changes?`
+
+7. **CLI** (`com.fulcrologic.test-filter.cli`)
+   - Commands: analyze, select, mark-verified, status, clear
    - Output formats: vars, namespaces, kaocha
    - Integration with external test runners
 
@@ -95,14 +165,19 @@ The `src/dev/user.clj` namespace provides helper functions:
 
 ```
 1. Analyze Phase:
-   clj-kondo → Analyzer → Symbol Graph → Cache (.test-filter-cache.edn)
+   clj-kondo → Analyzer → Symbol Graph → Content Hashing
+   → Analysis Cache (.test-filter-cache.edn)
 
 2. Selection Phase:
-   Git Diff → Changed Symbols → Graph Traversal → Affected Tests
+   Load Analysis Cache (current hashes)
+   Load Success Cache (verified hashes)
+   Compare Hashes → Changed Symbols
+   Graph Traversal → Affected Tests
+   Return Selection Object
 
-3. Smart Revision Detection:
-   - If uncommitted changes: compare HEAD to working directory
-   - If no uncommitted changes: compare HEAD^ to HEAD
+3. Verification Phase:
+   User runs tests (external)
+   mark-verified! → Update Success Cache with current hashes
 ```
 
 ### Key Data Structures
@@ -115,9 +190,9 @@ The `src/dev/user.clj` namespace provides helper functions:
  :line 42
  :end-line 47
  :defined-by 'defn             ; or 'clojure.test/deftest
- :metadata {:test? false
-            :integration? false
-            :test-targets #{...}}}  ; explicit test dependencies
+ :metadata {:test         false         ; boolean, true if this is a test var
+            :integration? false ; boolean, true if integration test
+            :test-targets #{...}}}  ; explicit test dependencies (optional)
 ```
 
 **Dependency Edge**:
@@ -126,6 +201,20 @@ The `src/dev/user.clj` namespace provides helper functions:
  :to 'other.ns/bar
  :file "src/my/ns.clj"
  :line 45}
+```
+
+**Selection Object** (returned by `select-tests`):
+```clojure
+{:tests [my.app-test/foo-test my.app-test/bar-test]
+ :changed-symbols #{my.app/foo my.app/baz}
+ :changed-hashes {my.app/foo "sha256..." 
+                  my.app/baz "sha256..."}
+ :trace {my.app-test/foo-test {my.app/foo [my.app-test/foo-test my.app/foo]}}
+ :graph {...}  ; Full dependency graph
+ :stats {:total-tests 12
+         :selected-tests 2
+         :changed-symbols 2
+         :selection-rate "16.7%"}}  ; or "N/A" if no tests
 ```
 
 ## Project Structure
@@ -149,10 +238,26 @@ src/
 
   demo/          - Demo/example code
 
-.test-filter-cache.edn - Generated cache file (gitignored)
+.test-filter-cache.edn    - Analysis cache (ephemeral, gitignored)
+.test-filter-success.edn  - Success cache (persistent, committed)
 ```
 
 ## Important Implementation Details
+
+### Cache Management
+
+**Analysis Cache** (`.test-filter-cache.edn`):
+- Ephemeral snapshot of current codebase
+- Should be in `.gitignore`
+- Completely overwritten on each `analyze!`
+- Contains: graph structure, current content hashes, analyzed paths
+
+**Success Cache** (`.test-filter-success.edn`):
+- Persistent baseline of verified symbols
+- Should be COMMITTED to git
+- Only updated by `mark-verified!` after tests pass
+- Contains: map of symbol -> verified content hash
+- This is what determines if tests need to run
 
 ### CLJC File Handling
 Only the `:clj` side of CLJC files is analyzed. Pure `.cljs` files are completely ignored. This is handled in `extract-var-definitions`, `extract-namespace-definitions`, and `extract-var-usages` in analyzer.clj.
@@ -167,11 +272,20 @@ Tests marked as integration tests (`:integration? true` metadata or namespace pa
 - If `:test-targets` metadata exists: run only if those symbols changed
 - Otherwise: run conservatively (always run, since dependencies are broad)
 
-### Git Revision Comparison
-The system automatically detects what to compare:
-- **With uncommitted changes**: compares HEAD to working directory
-- **No uncommitted changes**: compares HEAD^ to HEAD (previous commit)
-- Users can override with `:from-revision` and `:to-revision` options
+### Content-Based Change Detection
+
+The system uses SHA256 hashing of normalized code to detect changes:
+
+1. **Normalization**: Strips docstrings, comments, and normalizes whitespace
+2. **Hashing**: Generates SHA256 hash of normalized content
+3. **Comparison**: Current hash vs. success cache hash
+4. **Result**: Only actual logic changes trigger tests
+
+This means:
+- ✓ Formatting changes don't trigger tests
+- ✓ Docstring changes don't trigger tests  
+- ✓ Comment changes don't trigger tests
+- ✓ Only semantic/logic changes trigger tests
 
 ## Testing Philosophy
 
@@ -186,3 +300,7 @@ The project uses Kaocha as the test runner. The demo tests in `src/demo/` can be
 - `tools.cli` - Command-line parsing
 - `kaocha` (test alias) - Test runner
 - `fulcro-spec` (test alias) - Alternative test framework support
+- Always run tests using @docs/ai/running-tests.md
+- Prefer writing tests using @docs/ai/writing-tests.md unless the user says otherwise
+- Explore library source code and docs using @docs/ai/clojure-library-source-and-documentation.md or web searches
+- The @src/demo directory contains code that is meant as a REPL playground. Use it to try out the library. Feel free to make changes there, add files, etc.

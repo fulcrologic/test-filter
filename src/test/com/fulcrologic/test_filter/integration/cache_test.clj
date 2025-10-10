@@ -2,57 +2,67 @@
   "Integration test for cache operations.
 
   This should be detected as an integration test by namespace pattern."
-  (:require [fulcro-spec.core :refer [assertions specification behavior component => =fn=> =throws=>]]
+  (:require [com.fulcrologic.test-filter.analyzer :as analyzer]
             [com.fulcrologic.test-filter.cache :as cache]
-            [com.fulcrologic.test-filter.analyzer :as analyzer]
-            [com.fulcrologic.test-filter.git :as git]))
+            [com.fulcrologic.test-filter.content :as content]
+            [fulcro-spec.core :refer [=> assertions behavior specification]]))
 
 (specification "cache roundtrip" :group3
-               {:test-targets #{com.fulcrologic.test-filter.cache/save-graph!
-                                com.fulcrologic.test-filter.cache/load-graph}}
-               (behavior "saves and loads a graph with explicit :test-targets metadata"
-                         (let [;; Setup: Build a simple graph
-                               analysis (analyzer/run-analysis {:paths ["src/main"]})
-                               symbol-graph (analyzer/build-symbol-graph analysis)
-                               revision (git/current-revision)]
+  {:test-targets #{com.fulcrologic.test-filter.cache/save-graph!
+                   com.fulcrologic.test-filter.cache/load-graph}}
+  (behavior "saves and loads a graph with explicit :test-targets metadata"
+    (let [;; Setup: Build a simple graph
+          paths          ["src/main"]
+          analysis       (analyzer/run-analysis {:paths paths})
+          symbol-graph   (analyzer/build-symbol-graph analysis)
+          content-hashes (content/hash-graph-symbols symbol-graph)]
 
       ;; Run: Save it
-                           (cache/save-graph! symbol-graph revision)
+      (cache/save-graph! symbol-graph content-hashes paths)
 
       ;; Run: Load it back
-                           (let [loaded (cache/load-graph)]
+      (let [loaded (cache/load-graph)]
 
         ;; Assert
-                             (assertions
-                              "cache loads successfully"
-                              (some? loaded) => true
+        (assertions
+          "cache loads successfully"
+          (some? loaded) => true
 
-                              "revision matches"
-                              (:revision loaded) => revision
+          "has nodes map"
+          (map? (:nodes loaded)) => true
 
-                              "has nodes map"
-                              (map? (:nodes loaded)) => true
+          "has edges vector"
+          (sequential? (:edges loaded)) => true
 
-                              "has edges vector"
-                              (sequential? (:edges loaded)) => true)))))
+          "has content hashes"
+          (map? (:content-hashes loaded)) => true
+
+          "has paths"
+          (= (:paths loaded) paths) => true)))))
 
 (specification "full cache workflow" :group4
-               (behavior "runs full workflow without explicit targets (conservative integration test)"
-    ;; Setup: Get or build graph
-                         (let [graph (cache/get-or-build-graph :force true :paths ["src/main"])]
+  (behavior "runs full workflow without explicit targets (conservative integration test)"
+    ;; Setup: Build and save graph
+    (let [paths          ["src/main"]
+          analysis       (analyzer/run-analysis {:paths paths})
+          symbol-graph   (analyzer/build-symbol-graph analysis)
+          content-hashes (content/hash-graph-symbols symbol-graph)]
 
-      ;; Assert: Graph is valid
-                           (assertions
-                            "gets a graph"
-                            (some? graph) => true
+      (cache/save-graph! symbol-graph content-hashes paths)
 
-                            "has nodes"
-                            (pos? (count (:nodes graph))) => true))
+      (let [graph (cache/load-graph)]
+        ;; Assert: Graph is valid
+        (assertions
+          "gets a graph"
+          (some? graph) => true
 
-    ;; Run: Clear cache
-                         (cache/invalidate-cache!)
+          "has nodes"
+          (pos? (count (:nodes graph))) => true))
 
-    ;; Assert: Cache is cleared
-                         (assertions
-                          "cache is cleared"
-                          (cache/load-graph) => nil)))
+      ;; Run: Clear cache
+      (cache/invalidate-cache!)
+
+      ;; Assert: Cache is cleared
+      (assertions
+        "cache is cleared"
+        (cache/load-graph) => nil))))
