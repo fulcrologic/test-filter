@@ -1,8 +1,8 @@
 (ns com.fulcrologic.test-filter.graph
   "Graph operations for dependency analysis and test selection."
-  (:require [loom.graph :as lg]
+  (:require [clojure.set :as set]
             [loom.alg :as alg]
-            [clojure.set :as set]))
+            [loom.graph :as lg]))
 
 ;; -----------------------------------------------------------------------------
 ;; Graph Construction
@@ -17,14 +17,14 @@
   We'll traverse backwards from tests to find dependencies."
   [{:keys [nodes edges]}]
   (let [;; Create directed graph with all nodes
-        g (apply lg/digraph (keys nodes))
+        g            (apply lg/digraph (keys nodes))
         ;; Add edges (from uses to)
         g-with-edges (reduce (fn [g {:keys [from to]}]
                                (if (and from to)
                                  (lg/add-edges g [from to])
                                  g))
-                             g
-                             edges)]
+                       g
+                       edges)]
     g-with-edges))
 
 ;; -----------------------------------------------------------------------------
@@ -54,10 +54,10 @@
             (let [deps (transitive-dependencies graph node)]
               (reduce (fn [m dep]
                         (update m dep (fnil conj #{}) node))
-                      acc
-                      deps)))
-          {}
-          (lg/nodes graph)))
+                acc
+                deps)))
+    {}
+    (lg/nodes graph)))
 
 ;; -----------------------------------------------------------------------------
 ;; Test Selection
@@ -83,31 +83,31 @@
   [graph test-symbols changed-symbols symbol-graph]
   (let [;; Normalize test-symbols to pairs if needed
         test-pairs (if (and (seq test-symbols)
-                            (not (sequential? (first test-symbols))))
+                         (not (sequential? (first test-symbols))))
                      (map (fn [sym] [sym (get-in symbol-graph [:nodes sym])]) test-symbols)
                      test-symbols)
 
         ;; For each test, determine if it should run
-        affected (for [[test-sym node] test-pairs
-                       :let [metadata (:metadata node)
-                             test-targets (:test-targets metadata)
-                             integration? (:integration? metadata)]]
-                   (cond
-                     ;; If test has explicit targets, check if any changed
-                     test-targets
-                     (when (seq (set/intersection test-targets changed-symbols))
-                       test-sym)
+        affected   (for [[test-sym node] test-pairs
+                         :let [metadata     (:metadata node)
+                               test-targets (:test-targets metadata)
+                               integration? (:integration? metadata)]]
+                     (cond
+                       ;; If test has explicit targets, check if any changed
+                       test-targets
+                       (when (seq (set/intersection test-targets changed-symbols))
+                         test-sym)
 
-                     ;; If integration test without targets, run conservatively
-                     ;; (we can't determine dependencies accurately)
-                     integration?
-                     test-sym
+                       ;; If integration test without targets, run conservatively
+                       ;; (we can't determine dependencies accurately)
+                       integration?
+                       test-sym
 
-                     ;; Otherwise, use transitive dependency analysis
-                     :else
-                     (let [deps (transitive-dependencies graph test-sym)]
-                       (when (seq (set/intersection deps changed-symbols))
-                         test-sym))))]
+                       ;; Otherwise, use transitive dependency analysis
+                       :else
+                       (let [deps (transitive-dependencies graph test-sym)]
+                         (when (seq (set/intersection deps changed-symbols))
+                           test-sym))))]
     (set (filter some? affected))))
 
 ;; -----------------------------------------------------------------------------
@@ -119,7 +119,7 @@
   [graph]
   {:node-count (count (lg/nodes graph))
    :edge-count (count (lg/edges graph))
-   :nodes (lg/nodes graph)})
+   :nodes      (lg/nodes graph)})
 
 (comment
   ;; Example usage with analyzer:

@@ -1,8 +1,7 @@
 (ns com.fulcrologic.test-filter.git
   "Git operations for detecting code changes between revisions."
   (:require [clojure.java.shell :as shell]
-            [clojure.string :as str]
-            [clojure.set :as set]))
+            [clojure.string :as str]))
 
 ;; -----------------------------------------------------------------------------
 ;; Git Commands
@@ -17,8 +16,8 @@
     (if (zero? (:exit result))
       (str/trim (:out result))
       (throw (ex-info "Failed to get current git revision"
-                      {:exit-code (:exit result)
-                       :stderr (:err result)})))))
+               {:exit-code (:exit result)
+                :stderr    (:err result)})))))
 
 (defn resolve-revision
   "Resolves a git revision reference (partial SHA, branch name, tag, etc.) to a full SHA.
@@ -35,9 +34,9 @@
     (if (zero? (:exit result))
       (str/trim (:out result))
       (throw (ex-info "Failed to resolve git revision"
-                      {:exit-code (:exit result)
-                       :stderr (:err result)
-                       :rev-spec rev-spec})))))
+               {:exit-code (:exit result)
+                :stderr    (:err result)
+                :rev-spec  rev-spec})))))
 
 (defn has-uncommitted-changes?
   "Returns true if there are uncommitted changes in the working directory."
@@ -46,8 +45,8 @@
     (if (zero? (:exit result))
       (not (str/blank? (:out result)))
       (throw (ex-info "Failed to check git status"
-                      {:exit-code (:exit result)
-                       :stderr (:err result)})))))
+               {:exit-code (:exit result)
+                :stderr    (:err result)})))))
 
 (defn git-diff
   "Gets the diff between two revisions.
@@ -61,19 +60,19 @@
   ([from-rev]
    (git-diff from-rev "HEAD"))
   ([from-rev to-rev]
-   (let [args (if (nil? to-rev)
-                ;; nil means compare to working directory
-                ["git" "diff" from-rev]
-                ;; otherwise compare between two revisions
-                ["git" "diff" from-rev to-rev])
+   (let [args   (if (nil? to-rev)
+                  ;; nil means compare to working directory
+                  ["git" "diff" from-rev]
+                  ;; otherwise compare between two revisions
+                  ["git" "diff" from-rev to-rev])
          result (apply shell/sh args)]
      (if (zero? (:exit result))
        (:out result)
        (throw (ex-info "Failed to get git diff"
-                       {:exit-code (:exit result)
-                        :stderr (:err result)
-                        :from from-rev
-                        :to (or to-rev "working directory")}))))))
+                {:exit-code (:exit result)
+                 :stderr    (:err result)
+                 :from      from-rev
+                 :to        (or to-rev "working directory")}))))))
 
 (defn changed-files
   "Returns a set of files that changed between two revisions.
@@ -87,19 +86,19 @@
   ([from-rev]
    (changed-files from-rev nil))
   ([from-rev to-rev]
-   (let [args (if (nil? to-rev)
-                ;; nil means compare to working directory
-                ["git" "diff" "--name-only" from-rev]
-                ;; otherwise compare between two revisions
-                ["git" "diff" "--name-only" from-rev to-rev])
+   (let [args   (if (nil? to-rev)
+                  ;; nil means compare to working directory
+                  ["git" "diff" "--name-only" from-rev]
+                  ;; otherwise compare between two revisions
+                  ["git" "diff" "--name-only" from-rev to-rev])
          result (apply shell/sh args)]
      (if (zero? (:exit result))
        (set (remove str/blank? (str/split-lines (:out result))))
        (throw (ex-info "Failed to get changed files"
-                       {:exit-code (:exit result)
-                        :stderr (:err result)
-                        :from from-rev
-                        :to (or to-rev "working directory")}))))))
+                {:exit-code (:exit result)
+                 :stderr    (:err result)
+                 :from      from-rev
+                 :to        (or to-rev "working directory")}))))))
 
 ;; -----------------------------------------------------------------------------
 ;; Diff Parsing

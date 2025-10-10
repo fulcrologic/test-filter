@@ -1,9 +1,9 @@
 (ns com.fulcrologic.test-filter.cli
   "Command-line interface for test-filter."
-  (:require [com.fulcrologic.test-filter.core :as core]
-            [com.fulcrologic.test-filter.cache :as cache]
+  (:require [clojure.string :as str]
             [clojure.tools.cli :as cli]
-            [clojure.string :as str])
+            [com.fulcrologic.test-filter.cache :as cache]
+            [com.fulcrologic.test-filter.core :as core])
   (:gen-class))
 
 (def cli-options
@@ -73,11 +73,11 @@
         "  clojure -M -m test-filter.cli clear --all"
         ""
         "For more information, see: https://github.com/your-org/test-filter"]
-       (str/join \newline)))
+    (str/join \newline)))
 
 (defn error-msg [errors]
   (str "The following errors occurred while parsing your command:\n\n"
-       (str/join \newline errors)))
+    (str/join \newline errors)))
 
 (defn validate-args
   "Validate command line arguments. Returns a map with either :action, :options,
@@ -100,13 +100,13 @@
        :errors [(str "Unknown command: " (first arguments))]}
 
       :else
-      {:action (keyword (first arguments))
+      {:action  (keyword (first arguments))
        :options options})))
 
 (defn run-analyze [options]
   (try
     (core/analyze! :paths (:paths options)
-                   :verbose (or (:verbose options) true))
+      :verbose (or (:verbose options) true))
     0
     (catch Exception e
       (println "Error during analysis:" (.getMessage e))
@@ -116,10 +116,10 @@
 
 (defn run-select [options]
   (try
-    (let [result (core/select-tests
-                  :paths (:paths options)
-                  :all-tests (:all options)
-                  :verbose (:verbose options))
+    (let [result       (core/select-tests
+                         :paths (:paths options)
+                         :all-tests (:all options)
+                         :verbose (:verbose options))
           test-symbols (:tests result)]
 
       (when (:verbose options)
@@ -162,10 +162,10 @@
   (try
     ;; Need to get the last selection result
     ;; For CLI, we'll re-run select-tests to get the selection
-    (let [selection (core/select-tests
-                     :paths (:paths options)
-                     :verbose (:verbose options))
-          test-symbols (:tests selection)
+    (let [selection       (core/select-tests
+                            :paths (:paths options)
+                            :verbose (:verbose options))
+          test-symbols    (:tests selection)
           changed-symbols (:changed-symbols selection)]
 
       (if (empty? changed-symbols)
@@ -181,7 +181,7 @@
                               :else
                               :all)
 
-              result (core/mark-verified! selection tests-to-mark)]
+              result        (core/mark-verified! selection tests-to-mark)]
 
           (println "=== Verification Complete ===")
           (println "Verified symbols:" (count (:verified-symbols result)))
@@ -207,9 +207,9 @@
 
 (defn run-status [options]
   (try
-    (let [status (cache/cache-status)
+    (let [status         (cache/cache-status)
           analysis-cache (:analysis-cache status)
-          success-cache (:success-cache status)]
+          success-cache  (:success-cache status)]
 
       (println "=== Cache Status ===")
       (println)

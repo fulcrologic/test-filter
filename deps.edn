@@ -1,18 +1,19 @@
-{:paths ["src/main"]
+{:paths   ["src/main"]
 
- :deps {org.clojure/clojure {:mvn/version "1.12.2"}
-        clj-kondo/clj-kondo {:mvn/version "2025.07.28"}
-        aysylu/loom {:mvn/version "1.0.2"}
-        org.clojure/data.json {:mvn/version "2.5.1"}
-        org.clojure/tools.cli {:mvn/version "1.1.230"}
-        org.clojure/tools.reader {:mvn/version "1.5.2"}}
+ :deps    {org.clojure/clojure      {:mvn/version "1.12.2"}
+           clj-kondo/clj-kondo      {:mvn/version "2025.07.28"}
+           aysylu/loom              {:mvn/version "1.0.2"}
+           org.clojure/data.json    {:mvn/version "2.5.1"}
+           org.clojure/tools.cli    {:mvn/version "1.1.230"}
+           org.clojure/tools.reader {:mvn/version "1.5.2"}}
 
  :aliases {:test {:extra-paths ["src/test" "src/demo"]
-                  :extra-deps {fulcrologic/fulcro-spec {:mvn/version "3.1.12"}
-                               lambdaisland/kaocha {:mvn/version "1.91.1392"}
-                               clj-kondo/clj-kondo {:mvn/version "2025.07.28"}}}
+                  :extra-deps  {fulcrologic/fulcro-spec {:mvn/version "3.1.12"}
+                                lambdaisland/kaocha     {:mvn/version "1.91.1392"}
+                                clj-kondo/clj-kondo     {:mvn/version "2025.07.28"}}}
 
-           :dev {:extra-paths ["src/dev" "src/demo"]
-                 :extra-deps {org.clojure/tools.nrepl {:mvn/version "0.2.13"}}}
+           :dev  {:extra-paths ["src/dev" "src/demo"]
+                  :extra-deps  {org.clojure/tools.nrepl     {:mvn/version "0.2.13"}
+                                io.github.tonsky/clj-reload {:mvn/version "0.9.8"}}}
 
-           :cli {:main-opts ["-m" "test-filter.cli"]}}}
+           :cli  {:main-opts ["-m" "test-filter.cli"]}}}

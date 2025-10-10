@@ -1,12 +1,12 @@
 (ns com.fulcrologic.test-filter.cache
   "Persistence and caching of symbol graphs.
-  
+
   Two-cache architecture:
   1. Analysis Cache (.test-filter-cache.edn) - Ephemeral snapshot of current state
   2. Success Cache (.test-filter-success.edn) - Persistent baseline of verified symbols"
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io])
-  (:import [java.time Instant]))
+  (:import (java.time Instant)))
 
 ;; -----------------------------------------------------------------------------
 ;; Analysis Cache (Ephemeral)
@@ -30,11 +30,11 @@
    :files {\"src/foo.clj\" {:symbols [...]}}
    :content-hashes {symbol -> SHA256-hex-string}}"
   [symbol-graph content-hashes paths]
-  (let [cache-data {:analyzed-at (str (Instant/now))
-                    :paths paths
-                    :nodes (:nodes symbol-graph)
-                    :edges (:edges symbol-graph)
-                    :files (:files symbol-graph)
+  (let [cache-data {:analyzed-at    (str (Instant/now))
+                    :paths          paths
+                    :nodes          (:nodes symbol-graph)
+                    :edges          (:edges symbol-graph)
+                    :files          (:files symbol-graph)
                     :content-hashes content-hashes}
         cache-file (cache-path)]
     (spit cache-file (pr-str cache-data))
@@ -73,7 +73,7 @@
 
 (defn load-success-cache
   "Loads the success cache from disk.
-  
+
   Returns a map of symbol -> content-hash representing the last verified state.
   Returns empty map if cache doesn't exist."
   []
@@ -88,7 +88,7 @@
 
 (defn save-success-cache!
   "Saves the success cache to disk.
-  
+
   cache-data should be a map of symbol -> content-hash."
   [cache-data]
   (let [cache-file (success-cache-path)]
@@ -97,7 +97,7 @@
 
 (defn update-success-cache!
   "Updates the success cache by merging new verified hashes.
-  
+
   verified-hashes is a map of symbol -> hash to merge into the success cache."
   [verified-hashes]
   (let [current (load-success-cache)
@@ -125,20 +125,20 @@
 (defn cache-status
   "Returns information about the cache files."
   []
-  (let [analysis-file (io/file (cache-path))
-        success-file (io/file (success-cache-path))
+  (let [analysis-file    (io/file (cache-path))
+        success-file     (io/file (success-cache-path))
         analysis-exists? (.exists analysis-file)
-        success-exists? (.exists success-file)]
-    {:analysis-cache {:exists? analysis-exists?
-                      :path (cache-path)
-                      :size (when analysis-exists? (.length analysis-file))
+        success-exists?  (.exists success-file)]
+    {:analysis-cache {:exists?       analysis-exists?
+                      :path          (cache-path)
+                      :size          (when analysis-exists? (.length analysis-file))
                       :last-modified (when analysis-exists?
                                        (java.util.Date. (.lastModified analysis-file)))}
-     :success-cache {:exists? success-exists?
-                     :path (success-cache-path)
-                     :size (when success-exists? (.length success-file))
-                     :last-modified (when success-exists?
-                                      (java.util.Date. (.lastModified success-file)))}}))
+     :success-cache  {:exists?       success-exists?
+                      :path          (success-cache-path)
+                      :size          (when success-exists? (.length success-file))
+                      :last-modified (when success-exists?
+                                       (java.util.Date. (.lastModified success-file)))}}))
 
 (comment
   ;; Example usage

@@ -1,11 +1,10 @@
 (ns com.fulcrologic.test-filter.content
   "Content extraction and hashing for detecting semantic changes in code."
-  (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [clojure.tools.reader :as reader]
             [clojure.tools.reader.reader-types :as reader-types])
-  (:import [java.security MessageDigest]
-           [java.nio.charset StandardCharsets]))
+  (:import (java.nio.charset StandardCharsets)
+           (java.security MessageDigest)))
 
 ;; -----------------------------------------------------------------------------
 ;; Source Text Extraction
@@ -32,10 +31,10 @@
   (try
     (let [lines (read-file-lines file-path)]
       (when (and start-line end-line
-                 (<= start-line (dec (count lines)))
-                 (<= end-line (dec (count lines))))
+              (<= start-line (dec (count lines)))
+              (<= end-line (dec (count lines))))
         (str/join "\n"
-                  (subvec lines start-line (inc end-line)))))
+          (subvec lines start-line (inc end-line)))))
     (catch Exception e
       nil)))
 
@@ -45,22 +44,22 @@
 
 (defn strip-docstring-from-form
   "Removes docstring from a def* form.
-  
+
   Docstrings can appear in two positions:
   1. After the name, before args: (defn name \"doc\" [args] body)
   2. After args, before body: (defn name [args] \"doc\" body)
-  
+
   The reader may parse them differently depending on formatting.
-  
+
   Args:
     form - A Clojure form (list)
-    
+
   Returns:
     The form without the docstring"
   [form]
   (if (and (seq? form)
-           (symbol? (first form))
-           (str/starts-with? (name (first form)) "def"))
+        (symbol? (first form))
+        (str/starts-with? (name (first form)) "def"))
     (let [[def-sym name-sym & rest-parts] form]
       (cond
         ;; Case 1: docstring before args (defn foo "doc" [x] ...)
@@ -70,8 +69,8 @@
         ;; Case 2: docstring after args (defn foo [x] "doc" ...)
         ;; This happens when docstring is on a separate line in source
         (and (>= (count rest-parts) 2)
-             (vector? (first rest-parts))
-             (string? (second rest-parts)))
+          (vector? (first rest-parts))
+          (string? (second rest-parts)))
         (list* def-sym name-sym (first rest-parts) (drop 2 rest-parts))
 
         ;; No docstring, return as-is
@@ -97,7 +96,7 @@
                            new-v (remove-comments v)]
                        (when (and new-k new-v)
                          [new-k new-v])))
-                   form))
+               form))
 
     (set? form)
     (set (keep remove-comments form))
@@ -107,27 +106,27 @@
 
 (defn normalize-form-to-string
   "Converts a form back to a string with normalized formatting.
-  
+
   Uses pr-str which gives consistent output regardless of original formatting."
   [form]
   (pr-str form))
 
 (defn normalize-content
   "Normalizes source code content for semantic comparison.
-  
+
   Uses the EDN reader to parse the code, removes docstrings and comments,
   then re-emits with pr-str for consistent formatting."
   [source-text]
   (when source-text
     (try
       (let [;; Parse the source text
-            rdr (reader-types/source-logging-push-back-reader source-text)
+            rdr  (reader-types/source-logging-push-back-reader source-text)
             form (reader/read {:read-cond :preserve :eof nil} rdr)]
         (when form
           (-> form
-              strip-docstring-from-form
-              remove-comments
-              normalize-form-to-string)))
+            strip-docstring-from-form
+            remove-comments
+            normalize-form-to-string)))
       (catch Exception e
         ;; If parsing fails, fall back to original text
         ;; This can happen with incomplete forms or syntax errors
@@ -141,20 +140,20 @@
   "Generates a SHA256 hash of the input string."
   [^String s]
   (when s
-    (let [digest (MessageDigest/getInstance "SHA-256")
+    (let [digest     (MessageDigest/getInstance "SHA-256")
           hash-bytes (.digest digest (.getBytes s StandardCharsets/UTF_8))]
       ;; Convert to hex string
       (apply str (map #(format "%02x" %) hash-bytes)))))
 
 (defn hash-content
   "Generates a content hash for normalized source text.
-  
+
   Returns:
     SHA256 hex string, or nil if source-text is nil"
   [source-text]
   (some-> source-text
-          normalize-content
-          sha256))
+    normalize-content
+    sha256))
 
 ;; -----------------------------------------------------------------------------
 ;; Symbol Content Hashing
@@ -162,7 +161,7 @@
 
 (defn hash-symbol
   "Generates a content hash for a symbol's definition.
-  
+
   Args:
     file-path - Path to the source file
     symbol-node - Symbol node from analyzer with :line and :end-line
@@ -171,23 +170,23 @@
     {:symbol symbol
      :hash SHA256-hex-string
      :file file-path}
-    
+
     or nil if extraction/hashing fails"
   [file-path {:keys [line end-line] :as symbol-node} symbol]
   (when (and line end-line)
     (when-let [source-text (extract-source-text file-path line end-line)]
       (when-let [content-hash (hash-content source-text)]
         {:symbol symbol
-         :hash content-hash
-         :file file-path}))))
+         :hash   content-hash
+         :file   file-path}))))
 
 (defn hash-file-symbols
   "Generates content hashes for all symbols defined in a file.
-  
+
   Args:
     file-path - Path to the source file
     symbol-nodes - Map of {symbol -> node-data} from analyzer
-    
+
   Returns:
     Map of {symbol -> hash-string}"
   [file-path symbol-nodes]
@@ -195,27 +194,27 @@
             (if-let [hash-result (hash-symbol file-path node sym)]
               (assoc hashes sym (:hash hash-result))
               hashes))
-          {}
-          symbol-nodes))
+    {}
+    symbol-nodes))
 
 (defn hash-graph-symbols
   "Generates content hashes for all symbols in a symbol graph.
-  
+
   Args:
     symbol-graph - Symbol graph from analyzer with :nodes
-    
+
   Returns:
     Map of {symbol -> hash-string}"
   [symbol-graph]
-  (let [nodes (:nodes symbol-graph)
+  (let [nodes           (:nodes symbol-graph)
         ;; Group symbols by file
         symbols-by-file (group-by (fn [[_sym node]] (:file node)) nodes)]
 
     (reduce (fn [all-hashes [file-path symbol-nodes]]
               (merge all-hashes
-                     (hash-file-symbols file-path (into {} symbol-nodes))))
-            {}
-            symbols-by-file)))
+                (hash-file-symbols file-path (into {} symbol-nodes))))
+      {}
+      symbols-by-file)))
 
 ;; -----------------------------------------------------------------------------
 ;; Hash Comparison
@@ -223,11 +222,11 @@
 
 (defn find-changed-symbols
   "Compares two hash maps to find symbols with changed content.
-  
+
   Args:
     old-hashes - Map of {symbol -> hash} from cache
     new-hashes - Map of {symbol -> hash} from fresh analysis
-    
+
   Returns:
     Set of symbols that have changed (different hash or new symbols)"
   [old-hashes new-hashes]
@@ -238,16 +237,16 @@
 
 (defn find-deleted-symbols
   "Finds symbols that existed in old hashes but not in new hashes.
-  
+
   Args:
     old-hashes - Map of {symbol -> hash} from cache
     new-hashes - Map of {symbol -> hash} from fresh analysis
-    
+
   Returns:
     Set of symbols that were deleted"
   [old-hashes new-hashes]
   (set (filter #(not (contains? new-hashes %))
-               (keys old-hashes))))
+         (keys old-hashes))))
 
 (comment
   ;; Example usage:
