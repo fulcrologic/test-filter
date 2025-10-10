@@ -109,7 +109,8 @@
 
   Uses pr-str which gives consistent output regardless of original formatting."
   [form]
-  (pr-str form))
+  (when form
+    (pr-str form)))
 
 (defn normalize-content
   "Normalizes source code content for semantic comparison.

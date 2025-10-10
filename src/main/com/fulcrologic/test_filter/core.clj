@@ -22,7 +22,7 @@
   Returns the built symbol graph with :content-hashes."
   [& {:keys [paths verbose save?]
       :or   {paths   ["src"]
-             save? true
+             save?   true
              verbose true}}]
 
   (when verbose
@@ -133,6 +133,7 @@
   {:tests [test-symbols]              ; Tests that should run
    :changed-symbols #{...}            ; Symbols that changed
    :changed-hashes {symbol -> hash}   ; New hashes for changed symbols
+   :trace {...}                       ; Dependency chains from tests to changed symbols
    :graph symbol-graph                ; Full dependency graph
    :stats {...}}"
   [& {:keys [graph paths all-tests verbose]
@@ -174,6 +175,7 @@
       {:tests           test-symbols
        :changed-symbols #{}
        :changed-hashes  {}
+       :trace           {}
        :graph           symbol-graph
        :stats           {:total-tests      (count test-symbols)
                          :selected-tests   (count test-symbols)
@@ -216,12 +218,21 @@
                               []
                               (graph/find-affected-tests dep-graph test-pairs changed-symbols symbol-graph))
 
+            ;; Trace dependency chains for debugging
+            trace           (if (seq affected-tests)
+                              (graph/trace-test-dependencies dep-graph affected-tests changed-symbols)
+                              {})
+
             _               (when verbose
-                              (println "Affected tests:" (count affected-tests)))]
+                              (println "Affected tests:" (count affected-tests))
+                              (when (seq trace)
+                                (println "\nDependency traces:")
+                                (println (graph/format-trace trace :style :compact))))]
 
         {:tests           affected-tests
          :changed-symbols changed-symbols
          :changed-hashes  changed-hashes
+         :trace           trace
          :graph           symbol-graph
          :stats           {:total-tests     (count test-symbols)
                            :selected-tests  (count affected-tests)

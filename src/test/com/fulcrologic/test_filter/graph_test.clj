@@ -292,3 +292,151 @@
           "includes nodes list"
           (set? (set (:nodes stats))) => true
           (contains? (set (:nodes stats)) 'app.core/handler) => true)))))
+
+(specification "trace-test-dependencies"
+  (let [graph (graph/build-dependency-graph sample-symbol-graph)]
+
+    (behavior "traces dependency chains from tests to changed symbols"
+      (let [trace (graph/trace-test-dependencies
+                    graph
+                    ['app.core-test/handler-test]
+                    #{'app.db/save})]
+
+        (assertions
+          "returns a map keyed by test symbol"
+          (map? trace) => true
+          (contains? trace 'app.core-test/handler-test) => true
+
+          "maps test to changed symbols and their paths"
+          (map? (get trace 'app.core-test/handler-test)) => true
+          (contains? (get trace 'app.core-test/handler-test) 'app.db/save) => true
+
+          "path shows chain from test through intermediates to changed symbol"
+          (let [path (get-in trace ['app.core-test/handler-test 'app.db/save])]
+            (first path) => 'app.core-test/handler-test
+            (last path) => 'app.db/save
+            (> (count path) 2) => true))))
+
+    (behavior "handles multiple changed symbols"
+      (let [trace (graph/trace-test-dependencies
+                    graph
+                    ['app.core-test/handler-test]
+                    #{'app.core/process 'app.db/query})]
+
+        (assertions
+          "includes paths to all changed symbols"
+          (contains? (get trace 'app.core-test/handler-test) 'app.core/process) => true
+          (contains? (get trace 'app.core-test/handler-test) 'app.db/query) => true)))
+
+    (behavior "handles multiple tests"
+      (let [trace (graph/trace-test-dependencies
+                    graph
+                    ['app.core-test/handler-test 'app.db-test/query-test]
+                    #{'app.db/query})]
+
+        (assertions
+          "includes traces for both tests"
+          (contains? trace 'app.core-test/handler-test) => true
+          (contains? trace 'app.db-test/query-test) => true)))
+
+    (behavior "excludes tests not affected by changes"
+      (let [trace (graph/trace-test-dependencies
+                    graph
+                    ['app.core-test/handler-test 'app.db-test/query-test]
+                    #{'app.db/save})]
+
+        (assertions
+          "includes test transitively affected"
+          (contains? trace 'app.core-test/handler-test) => true
+
+          "excludes test not affected"
+          (contains? trace 'app.db-test/query-test) => false)))
+
+    (behavior "handles empty changed set"
+      (let [trace (graph/trace-test-dependencies
+                    graph
+                    ['app.core-test/handler-test]
+                    #{})]
+
+        (assertions
+          "returns empty map"
+          trace => {})))
+
+    (behavior "handles empty test set"
+      (let [trace (graph/trace-test-dependencies
+                    graph
+                    []
+                    #{'app.db/save})]
+
+        (assertions
+          "returns empty map"
+          trace => {})))))
+
+(specification "format-trace"
+  (let [sample-trace {'app.core-test/handler-test
+                      {'app.db/save  ['app.core-test/handler-test
+                                      'app.core/handler
+                                      'app.core/process
+                                      'app.db/save]
+                       'app.db/query ['app.core-test/handler-test
+                                      'app.core/handler
+                                      'app.db/query]}
+                      'app.db-test/query-test
+                      {'app.db/query ['app.db-test/query-test 'app.db/query]}}]
+
+    (behavior "formats in compact style by default"
+      (let [output (graph/format-trace sample-trace)]
+
+        (assertions
+          "returns a string"
+          (string? output) => true
+
+          "includes test names"
+          (.contains output "app.core-test/handler-test") => true
+          (.contains output "app.db-test/query-test") => true
+
+          "shows unique symbols in paths as vectors"
+          (.contains output "[") => true
+          (.contains output "]") => true)))
+
+    (behavior "formats in compact style explicitly"
+      (let [output (graph/format-trace sample-trace :style :compact)]
+
+        (assertions
+          "shows symbols in brackets"
+          (.contains output "[") => true
+
+          "includes intermediate symbols"
+          (.contains output "app.core/handler") => true
+          (.contains output "app.core/process") => true)))
+
+    (behavior "formats in detailed style"
+      (let [output (graph/format-trace sample-trace :style :detailed)]
+
+        (assertions
+          "shows arrow chains"
+          (.contains output "->") => true
+
+          "marks changed symbols"
+          (.contains output "(changed)") => true
+
+          "shows each path on separate line"
+          (.contains output "\n  ") => true
+
+          "includes test name as header"
+          (.contains output "app.core-test/handler-test:") => true)))
+
+    (behavior "handles empty trace"
+      (let [output (graph/format-trace {})]
+
+        (assertions
+          "returns empty string"
+          output => "")))
+
+    (behavior "sorts output alphabetically"
+      (let [output (graph/format-trace sample-trace)]
+
+        (assertions
+          "app.core-test comes before app.db-test"
+          (< (.indexOf output "app.core-test")
+            (.indexOf output "app.db-test")) => true)))))

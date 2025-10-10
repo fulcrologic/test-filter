@@ -18,7 +18,8 @@
 (defn join-paths
   "Joins path segments with the appropriate separator."
   [& segments]
-  (normalize-path (clojure.string/join "/" segments)))
+  (when (seq segments)
+    (normalize-path (clojure.string/join "/" segments))))
 
 (defn log-message
   "Logs a message to the console. Platform-specific implementation."

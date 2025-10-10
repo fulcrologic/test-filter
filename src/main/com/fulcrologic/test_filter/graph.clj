@@ -1,6 +1,7 @@
 (ns com.fulcrologic.test-filter.graph
   "Graph operations for dependency analysis and test selection."
   (:require [clojure.set :as set]
+            [clojure.string :as str]
             [loom.alg :as alg]
             [loom.graph :as lg]))
 
@@ -120,6 +121,68 @@
   {:node-count (count (lg/nodes graph))
    :edge-count (count (lg/edges graph))
    :nodes      (lg/nodes graph)})
+
+(defn trace-test-dependencies
+  "Returns a map showing the dependency chain from tests to changed symbols.
+
+  For each affected test, finds one shortest path to each changed symbol it depends on.
+  Useful for understanding why a test was selected.
+
+  Args:
+    graph - loom directed graph of symbol dependencies
+    test-symbols - collection of test symbols to trace
+    changed-symbols - set of symbols that have changed
+
+  Returns:
+    Map of {test-symbol -> {changed-symbol -> [path-to-changed]}}
+    where path is a vector showing the chain: [test intermediate1 ... changed-symbol]
+
+  Example output:
+    {'my.app-test/foo-test {'my.app/h [my.app-test/foo-test my.app/f my.app/g my.app/h]}}"
+  [graph test-symbols changed-symbols]
+  (into {}
+    (for [test-sym test-symbols
+          :let [deps             (transitive-dependencies graph test-sym)
+                relevant-changes (set/intersection deps changed-symbols)]
+          :when (seq relevant-changes)]
+      [test-sym
+       (into {}
+         (for [changed-sym relevant-changes
+               :let [path (alg/bf-path graph test-sym changed-sym)]
+               :when path]
+           [changed-sym (vec path)]))])))
+
+(defn format-trace
+  "Formats a trace map into a human-readable string.
+
+  Options:
+  - :style - :compact (default) or :detailed
+    - :compact: 'test-foo [f g h]'
+    - :detailed: 'test-foo -> f -> g -> h (changed)'
+
+  Args:
+    trace-map - output from trace-test-dependencies
+    opts - formatting options
+
+  Returns:
+    String representation of the trace"
+  [trace-map & {:keys [style] :or {style :compact}}]
+  (let [lines (for [[test-sym changes] (sort-by (comp str first) trace-map)]
+                (if (= style :detailed)
+                  ;; Detailed: show each change on separate line with full path
+                  (str test-sym ":\n"
+                    (str/join "\n"
+                      (for [[changed-sym path] (sort-by (comp str first) changes)]
+                        (str "  " (str/join " -> " path) " (changed)"))))
+                  ;; Compact: show all changed symbols in a flat list
+                  (let [all-changes  (set (mapcat second changes))
+                        ;; Get unique symbols in paths (excluding the test itself)
+                        path-symbols (into (sorted-set)
+                                       (mapcat (fn [[_ path]]
+                                                 (rest path))
+                                         changes))]
+                    (str test-sym " " (vec path-symbols)))))]
+    (str/join "\n" lines)))
 
 (comment
   ;; Example usage with analyzer:
