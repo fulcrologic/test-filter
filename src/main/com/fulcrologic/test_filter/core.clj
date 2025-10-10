@@ -5,6 +5,7 @@
             [com.fulcrologic.test-filter.analyzer :as analyzer]
             [com.fulcrologic.test-filter.cache :as cache]
             [com.fulcrologic.test-filter.content :as content]
+            [com.fulcrologic.test-filter.git :as git]
             [com.fulcrologic.test-filter.graph :as graph]))
 
 (defn analyze!
@@ -50,11 +51,79 @@
 
     (assoc graph :content-hashes content-hashes)))
 
+(defn patch-graph-with-local-changes
+  "Updates a graph with fresh content hashes for uncommitted file changes.
+
+  This is useful for fast iterations in the REPL when making code changes.
+  Instead of re-running full analysis (slow), this:
+  1. Detects uncommitted files via git
+  2. Re-computes hashes for symbols in those files only
+  3. Merges fresh hashes into the graph
+
+  The returned graph can be passed to select-tests via :graph parameter
+  to avoid cache I/O and get up-to-date change detection.
+
+  Args:
+    graph - Symbol graph from analyze! (with :content-hashes)
+
+  Options:
+    :verbose - Print diagnostic information (default: false)
+
+  Returns:
+    Updated graph with fresh :content-hashes for changed files
+
+  Example REPL workflow:
+    ;; Once per session or when structure changes
+    (def graph (analyze! :paths [\"src\"]))
+
+    ;; Fast iterations - edit code, save, then:
+    (def selection (select-tests :graph (patch-graph-with-local-changes graph)))
+    (apply k/run (:tests selection))"
+  [graph & {:keys [verbose]
+            :or   {verbose false}}]
+
+  (let [;; Find files with uncommitted changes
+        changed-files (try
+                        (git/uncommitted-files)
+                        (catch Exception e
+                          (when verbose
+                            (println "Warning: Could not detect git changes:" (.getMessage e))
+                            (println "Returning graph unchanged."))
+                          #{}))
+
+        _             (when verbose
+                        (println "=== Patching Graph with Local Changes ===")
+                        (println "Uncommitted files:" (count changed-files))
+                        (when (seq changed-files)
+                          (doseq [f (take 5 changed-files)]
+                            (println "  -" f))
+                          (when (> (count changed-files) 5)
+                            (println "  ... and" (- (count changed-files) 5) "more"))))]
+
+    (if (empty? changed-files)
+      ;; No changes, return graph as-is
+      (do
+        (when verbose
+          (println "No uncommitted changes detected."))
+        graph)
+
+      ;; Re-hash the changed files
+      (let [old-hashes  (:content-hashes graph)
+            live-hashes (content/rehash-files graph changed-files)
+            new-hashes  (merge old-hashes live-hashes)
+
+            _           (when verbose
+                          (println "Re-hashed symbols:" (count live-hashes))
+                          (println "Total hashes:" (count new-hashes)))]
+
+        (assoc graph :content-hashes new-hashes)))))
+
 (defn select-tests
   "Selects tests that need to run by comparing current state vs verified baseline.
 
   Options:
-  - :paths - Paths to analyze (default: uses cached paths, or [\"src\"] if no cache)
+  - :graph - Use provided graph instead of loading from cache (default: nil)
+  - :paths - Paths to analyze if no graph/cache (default: [\"src\"])
   - :all-tests - Return all tests regardless of changes (default: false)
   - :verbose - Print diagnostic information (default: false)
 
@@ -64,107 +133,102 @@
    :changed-hashes {symbol -> hash}   ; New hashes for changed symbols
    :graph symbol-graph                ; Full dependency graph
    :stats {...}}"
-  [& {:keys [paths all-tests verbose]
+  [& {:keys [graph paths all-tests verbose]
       :or   {all-tests false
              verbose   false}}]
 
-  ;; Determine paths: use provided paths, or cached paths, or default to ["src"]
-  (let [cached-graph    (cache/load-graph)
-        effective-paths (or paths
-                          (:paths cached-graph)
-                          ["src"])]
+  (when verbose
+    (println "=== Test Selection ==="))
 
-    (when verbose
-      (println "=== Test Selection ===")
-      (println "Paths:" effective-paths)
-      (when (and (nil? paths) (:paths cached-graph))
-        (println "  (using cached paths)")))
+  ;; Load or use provided graph
+  (let [symbol-graph   (or graph
+                         (cache/load-graph)
+                         (do
+                           (when verbose
+                             (println "No graph provided or cached, running analyze..."))
+                           (analyze! :paths (or paths ["src"]) :verbose verbose)))
 
-    ;; Load or build the analysis cache
-    (let [symbol-graph   (or cached-graph
-                           (do
-                             (when verbose
-                               (println "No analysis cache found, running analyze..."))
-                             (analyze! :paths effective-paths :verbose verbose)))
+        _              (when verbose
+                         (if graph
+                           (println "Using provided graph")
+                           (println "Loaded graph from cache"))
+                         (println "Graph nodes:" (count (:nodes symbol-graph)))
+                         (println "Graph edges:" (count (:edges symbol-graph))))
 
-          current-hashes (or (:content-hashes symbol-graph) {})
+        current-hashes (or (:content-hashes symbol-graph) {})
 
-          _              (when verbose
-                           (println "Graph nodes:" (count (:nodes symbol-graph)))
-                           (println "Graph edges:" (count (:edges symbol-graph))))
+        ;; Build dependency graph
+        dep-graph      (graph/build-dependency-graph symbol-graph)
 
-          ;; Build dependency graph
-          dep-graph      (graph/build-dependency-graph symbol-graph)
+        ;; Find all test vars - get pairs of [symbol node-data]
+        test-pairs     (vec (analyzer/find-test-vars symbol-graph))
+        test-symbols   (map first test-pairs)
 
-          ;; Find all test vars - get pairs of [symbol node-data]
-          test-pairs     (vec (analyzer/find-test-vars symbol-graph))
-          test-symbols   (map first test-pairs)
+        _              (when verbose
+                         (println "Total tests found:" (count test-symbols)))]
 
-          _              (when verbose
-                           (println "Total tests found:" (count test-symbols)))]
+    (if all-tests
+      ;; Return all tests
+      {:tests           test-symbols
+       :changed-symbols #{}
+       :changed-hashes  {}
+       :graph           symbol-graph
+       :stats           {:total-tests      (count test-symbols)
+                         :selected-tests   (count test-symbols)
+                         :changed-symbols  0
+                         :selection-reason "all-tests requested"}}
 
-      (if all-tests
-        ;; Return all tests
-        {:tests           test-symbols
-         :changed-symbols #{}
-         :changed-hashes  {}
+      ;; Compare current hashes vs success cache
+      (let [success-hashes  (cache/load-success-cache)
+
+            _               (when verbose
+                              (println "Success cache entries:" (count success-hashes)))
+
+            ;; Find symbols where current hash differs from verified hash
+            changed-symbols (into #{}
+                              (keep (fn [[sym current-hash]]
+                                      (let [verified-hash (get success-hashes sym)]
+                                        ;; Changed if: no verified hash OR hash differs
+                                        (when (or (nil? verified-hash)
+                                                (not= current-hash verified-hash))
+                                          sym)))
+                                current-hashes))
+
+            ;; Build map of changed symbol -> new hash
+            changed-hashes  (into {}
+                              (keep (fn [sym]
+                                      (when-let [hash (get current-hashes sym)]
+                                        [sym hash]))
+                                changed-symbols))
+
+            _               (when verbose
+                              (println "Symbols with changes:" (count changed-symbols))
+                              (when (seq changed-symbols)
+                                (doseq [sym (take 10 changed-symbols)]
+                                  (println "  -" sym))
+                                (when (> (count changed-symbols) 10)
+                                  (println "  ... and" (- (count changed-symbols) 10) "more"))))
+
+            ;; Find affected tests
+            affected-tests  (if (empty? changed-symbols)
+                              []
+                              (graph/find-affected-tests dep-graph test-pairs changed-symbols symbol-graph))
+
+            _               (when verbose
+                              (println "Affected tests:" (count affected-tests)))]
+
+        {:tests           affected-tests
+         :changed-symbols changed-symbols
+         :changed-hashes  changed-hashes
          :graph           symbol-graph
-         :stats           {:total-tests      (count test-symbols)
-                           :selected-tests   (count test-symbols)
-                           :changed-symbols  0
-                           :selection-reason "all-tests requested"}}
-
-        ;; Compare current hashes vs success cache
-        (let [success-hashes  (cache/load-success-cache)
-
-              _               (when verbose
-                                (println "Success cache entries:" (count success-hashes)))
-
-              ;; Find symbols where current hash differs from verified hash
-              changed-symbols (into #{}
-                                (keep (fn [[sym current-hash]]
-                                        (let [verified-hash (get success-hashes sym)]
-                                          ;; Changed if: no verified hash OR hash differs
-                                          (when (or (nil? verified-hash)
-                                                  (not= current-hash verified-hash))
-                                            sym)))
-                                  current-hashes))
-
-              ;; Build map of changed symbol -> new hash
-              changed-hashes  (into {}
-                                (keep (fn [sym]
-                                        (when-let [hash (get current-hashes sym)]
-                                          [sym hash]))
-                                  changed-symbols))
-
-              _               (when verbose
-                                (println "Symbols with changes:" (count changed-symbols))
-                                (when (seq changed-symbols)
-                                  (doseq [sym (take 10 changed-symbols)]
-                                    (println "  -" sym))
-                                  (when (> (count changed-symbols) 10)
-                                    (println "  ... and" (- (count changed-symbols) 10) "more"))))
-
-              ;; Find affected tests
-              affected-tests  (if (empty? changed-symbols)
-                                []
-                                (graph/find-affected-tests dep-graph test-pairs changed-symbols symbol-graph))
-
-              _               (when verbose
-                                (println "Affected tests:" (count affected-tests)))]
-
-          {:tests           affected-tests
-           :changed-symbols changed-symbols
-           :changed-hashes  changed-hashes
-           :graph           symbol-graph
-           :stats           {:total-tests     (count test-symbols)
-                             :selected-tests  (count affected-tests)
-                             :changed-symbols (count changed-symbols)
-                             :selection-rate  (if (pos? (count test-symbols))
-                                                (format "%.1f%%"
-                                                  (* 100.0 (/ (count affected-tests)
-                                                             (count test-symbols))))
-                                                "N/A")}})))))
+         :stats           {:total-tests     (count test-symbols)
+                           :selected-tests  (count affected-tests)
+                           :changed-symbols (count changed-symbols)
+                           :selection-rate  (if (pos? (count test-symbols))
+                                              (format "%.1f%%"
+                                                (* 100.0 (/ (count affected-tests)
+                                                           (count test-symbols))))
+                                              "N/A")}}))))
 
 (defn mark-verified!
   "Marks tests as successfully verified by updating the success cache.

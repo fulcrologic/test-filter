@@ -100,6 +100,27 @@
                  :from      from-rev
                  :to        (or to-rev "working directory")}))))))
 
+(defn uncommitted-files
+  "Returns a set of files that have uncommitted changes in the working directory.
+
+  This includes:
+  - Modified files (staged and unstaged)
+  - New files (staged and unstaged)
+
+  Does NOT include:
+  - Deleted files (since we can't re-hash them)
+  - Untracked files (not in git yet)
+
+  Returns:
+    Set of file paths relative to repo root"
+  []
+  (let [result (shell/sh "git" "diff" "--name-only" "HEAD")]
+    (if (zero? (:exit result))
+      (set (remove str/blank? (str/split-lines (:out result))))
+      (throw (ex-info "Failed to get uncommitted files"
+               {:exit-code (:exit result)
+                :stderr    (:err result)})))))
+
 ;; -----------------------------------------------------------------------------
 ;; Diff Parsing
 ;; -----------------------------------------------------------------------------

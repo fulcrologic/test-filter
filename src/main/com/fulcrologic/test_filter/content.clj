@@ -216,6 +216,36 @@
       {}
       symbols-by-file)))
 
+(defn rehash-files
+  "Re-computes content hashes for symbols in specific files from a graph.
+
+  This is useful for updating hashes when files have changed without doing
+  a full analysis. Takes the existing graph structure and re-reads the files
+  to compute fresh hashes.
+
+  Args:
+    symbol-graph - Symbol graph with :nodes
+    file-paths - Collection of file paths to re-hash
+
+  Returns:
+    Map of {symbol -> hash-string} for symbols in the specified files"
+  [symbol-graph file-paths]
+  (let [nodes            (:nodes symbol-graph)
+        file-set         (set file-paths)
+        ;; Filter to only symbols in the specified files
+        symbols-in-files (filter (fn [[_sym node]]
+                                   (contains? file-set (:file node)))
+                           nodes)
+        ;; Group by file
+        by-file          (group-by (fn [[_sym node]] (:file node))
+                           symbols-in-files)]
+
+    (reduce (fn [hashes [file-path symbol-nodes]]
+              (merge hashes
+                (hash-file-symbols file-path (into {} symbol-nodes))))
+      {}
+      by-file)))
+
 ;; -----------------------------------------------------------------------------
 ;; Hash Comparison
 ;; -----------------------------------------------------------------------------

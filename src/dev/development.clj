@@ -26,10 +26,14 @@
   (k/run-all)
 
   ;; 1. Analyze codebase (creates/updates analysis cache)
-  (tf/analyze! :paths ["src/demo"])
+  (def graph (tf/analyze! :paths ["src/demo"]))
 
   ;; 2. Select tests (compares current vs success cache)
-  (def selection (tf/select-tests :verbose true :paths ["src/demo"]))
+  (def selection
+    (tf/select-tests
+      :graph (tf/patch-graph-with-local-changes graph)
+      :verbose true
+      :paths ["src/demo"]))
 
   ;; 3. View what needs testing
   (tf/print-tests (:tests selection) :format :namespaces)

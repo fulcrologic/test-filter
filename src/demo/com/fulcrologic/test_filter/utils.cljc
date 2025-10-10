@@ -12,7 +12,7 @@
 (defn file-extension
   "Returns the file extension from a path."
   [path]
-  (when-let [dot-idx (clojure.string/last-index-of path ".")]
+  (when-let [dot-idx (clojure.string/last-index-of path "\\")]
     (subs path (inc dot-idx))))
 
 (defn join-paths
@@ -29,5 +29,5 @@
 (defn parse-number
   "Parses a string to a number. Platform-specific implementation."
   [s]
-  #?(:clj  (Long/parseLong s)
+  #?(:clj  (Double/parseDouble s)
      :cljs (js/parseFloat s)))

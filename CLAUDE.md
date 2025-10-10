@@ -52,7 +52,38 @@ clojure -M:cli clear --all    # Clear both caches
 ```
 
 ### REPL-Based Development
-The `src/dev/user.clj` namespace provides helper functions:
+
+#### Fast Iteration Workflow (Recommended)
+
+For the fastest iteration during development, use `patch-graph-with-local-changes` to avoid re-analysis:
+
+```clojure
+(require '[com.fulcrologic.test-filter.core :as tf])
+(require '[kaocha.repl :as k])
+
+;; 1. Analyze once per session (or when structure changes)
+(def graph (tf/analyze! :paths ["src/main" "src/demo" "src/test"]))
+
+;; 2. Fast iteration loop - edit code, save, then:
+(def selection (tf/select-tests :graph (tf/patch-graph-with-local-changes graph)))
+(apply k/run (:tests selection))
+
+;; 3. Mark as verified after tests pass
+(tf/mark-verified! selection)
+
+;; Repeat step 2 for each edit - no re-analysis needed!
+```
+
+**How it works:**
+- `patch-graph-with-local-changes` detects uncommitted files via git
+- Re-computes hashes only for symbols in changed files (fast!)
+- Merges fresh hashes into the graph
+- No I/O - graph passed directly to `select-tests`
+
+#### Cache-Based Workflow
+
+For one-off selections or when you don't have a graph in memory:
+
 ```clojure
 (require '[com.fulcrologic.test-filter.core :as tf])
 
@@ -113,12 +144,17 @@ selection
 
 5. **Core** (`com.fulcrologic.test-filter.core`)
    - Main test selection algorithm coordinating all components
-   - Provides `analyze!`, `select-tests`, and `mark-verified!` public API
+   - Public API:
+     - `analyze!` - Full analysis with clj-kondo (returns graph)
+     - `patch-graph-with-local-changes` - Fast hash updates for git-changed files
+     - `select-tests` - Test selection (accepts optional `:graph` parameter)
+     - `mark-verified!` - Update success cache after tests pass
    - Compares current hashes vs success cache to detect changes
 
 6. **Git** (`com.fulcrologic.test-filter.git`)
-   - Optional: Can be used to detect which files changed
-   - Not required for core functionality (content hashing handles change detection)
+   - Detects uncommitted file changes for fast iteration
+   - Used by `patch-graph-with-local-changes` to identify files needing re-hash
+   - Functions: `uncommitted-files`, `changed-files`, `has-uncommitted-changes?`
 
 7. **CLI** (`com.fulcrologic.test-filter.cli`)
    - Commands: analyze, select, mark-verified, status, clear
@@ -262,3 +298,7 @@ The project uses Kaocha as the test runner. The demo tests in `src/demo/` can be
 - `tools.cli` - Command-line parsing
 - `kaocha` (test alias) - Test runner
 - `fulcro-spec` (test alias) - Alternative test framework support
+- Always run tests using @docs/ai/running-tests.md
+- Prefer writing tests using @docs/ai/writing-tests.md unless the user says otherwise
+- Explore library source code and docs using @docs/ai/clojure-library-source-and-documentation.md or web searches
+- The @src/demo directory contains code that is meant as a REPL playground. Use it to try out the library. Feel free to make changes there, add files, etc.
