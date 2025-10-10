@@ -4,6 +4,7 @@
             [clojure.java.io :as io]
             [clojure.set :as set]
             [com.fulcrologic.test-filter.analyzer :as analyzer]
+            [com.fulcrologic.test-filter.content :as content]
             [com.fulcrologic.test-filter.git :as git])
   (:import [java.time Instant]))
 
@@ -15,20 +16,22 @@
   *cache-file*)
 
 (defn save-graph!
-  "Persists a symbol graph to disk with revision metadata.
+  "Persists a symbol graph to disk with revision metadata and content hashes.
 
   Graph structure:
   {:revision \"abc123...\"
    :analyzed-at \"2024-...\"  ; ISO-8601 string
    :nodes {...}
    :edges [...]
-   :files {\"src/foo.clj\" {:symbols [...] :revision \"abc123\"}}}"
-  [symbol-graph revision]
+   :files {\"src/foo.clj\" {:symbols [...] :revision \"abc123\"}}
+   :content-hashes {symbol -> SHA256-hex-string}}"
+  [symbol-graph revision content-hashes]
   (let [cache-data {:revision revision
                     :analyzed-at (str (Instant/now)) ; Convert to string for EDN
                     :nodes (:nodes symbol-graph)
                     :edges (:edges symbol-graph)
-                    :files (:files symbol-graph)}
+                    :files (:files symbol-graph)
+                    :content-hashes content-hashes}
         cache-file (cache-path)]
     (spit cache-file (pr-str cache-data))
     cache-data))
@@ -72,10 +75,10 @@
   3. Re-analyze changed files
   4. Remove old symbols from changed and deleted files
   5. Add new symbols from analysis
-  6. Update revision
+  6. Update revision and content hashes
 
-  Returns updated graph."
-  [{:keys [nodes edges files] :as cached-graph} changed-file-set]
+  Returns updated graph with :content-hashes."
+  [{:keys [nodes edges files content-hashes] :as cached-graph} changed-file-set]
   (let [;; Find files in cache that no longer exist on filesystem
         deleted-files (set (filter #(not (.exists (io/file %))) (keys files)))
         ;; Combine changed and deleted files for removal
@@ -93,6 +96,7 @@
             cleaned-edges (remove #(or (contains? removed-symbols (:from %))
                                        (contains? removed-symbols (:to %)))
                                   edges)
+            cleaned-hashes (apply dissoc (or content-hashes {}) removed-symbols)
 
             ;; Re-analyze only changed files (not deleted ones)
             paths (vec changed-file-set)
@@ -103,17 +107,24 @@
                         (analyzer/build-symbol-graph new-analysis)
                         {:nodes {} :edges [] :files {}})
 
+            ;; Generate content hashes for new symbols
+            new-hashes (if (seq paths)
+                         (content/hash-graph-symbols new-graph)
+                         {})
+
             ;; Merge new data
             merged-nodes (merge cleaned-nodes (:nodes new-graph))
             merged-edges (concat cleaned-edges (:edges new-graph))
             merged-files (merge (apply dissoc files files-to-remove)
-                                (:files new-graph))]
+                                (:files new-graph))
+            merged-hashes (merge cleaned-hashes new-hashes)]
 
         {:revision (git/current-revision)
          :analyzed-at (Instant/now)
          :nodes merged-nodes
          :edges merged-edges
-         :files merged-files}))))
+         :files merged-files
+         :content-hashes merged-hashes}))))
 
 (defn get-or-build-graph
   "Gets cached graph if valid, otherwise builds a fresh one.
@@ -123,7 +134,7 @@
   - :incremental - Try incremental update if cache is stale (default true)
   - :paths - Paths to analyze (default [\"src\"])
 
-  Returns symbol graph with metadata."
+  Returns symbol graph with metadata and :content-hashes."
   [& {:keys [force incremental paths]
       :or {incremental true
            paths ["src"]}}]
@@ -134,9 +145,10 @@
       ;; Force rebuild requested
       force
       (let [analysis (analyzer/run-analysis {:paths paths})
-            graph (analyzer/build-symbol-graph analysis)]
-        (save-graph! graph current-rev)
-        graph)
+            graph (analyzer/build-symbol-graph analysis)
+            hashes (content/hash-graph-symbols graph)]
+        (save-graph! graph current-rev hashes)
+        (assoc graph :content-hashes hashes))
 
       ;; Cache valid, use it
       (cache-valid? cached)
@@ -146,15 +158,16 @@
       (and incremental cached)
       (let [changed (changed-files-since-cache cached)
             updated (incremental-update cached changed)]
-        (save-graph! updated (:revision updated))
+        (save-graph! updated (:revision updated) (:content-hashes updated))
         updated)
 
       ;; No cache or incremental disabled, full rebuild
       :else
       (let [analysis (analyzer/run-analysis {:paths paths})
-            graph (analyzer/build-symbol-graph analysis)]
-        (save-graph! graph current-rev)
-        graph))))
+            graph (analyzer/build-symbol-graph analysis)
+            hashes (content/hash-graph-symbols graph)]
+        (save-graph! graph current-rev hashes)
+        (assoc graph :content-hashes hashes)))))
 
 (defn invalidate-cache!
   "Deletes the cache file."
