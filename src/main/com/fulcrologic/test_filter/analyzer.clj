@@ -98,7 +98,10 @@
                 (fn [[filepath calls]]
                   (try
                     (let [source       (slurp filepath)
-                          spec-pattern #"\(specification\s+\"([^\"]+)\""
+                          ;; Match (specification "name" ...) with optional metadata/keywords
+                          ;; Pattern handles: (specification "name"), (specification "name" :key),
+                          ;;                  (specification {:meta} "name"), etc.
+                          spec-pattern #"\(specification\s+.*?\"([^\"]+)\""
                           lines        (str/split-lines source)
                           ;; Find specification lines and their test names
                           specs        (keep-indexed
@@ -108,9 +111,10 @@
                                               :test-name (second match)}))
                                          lines)
                           ns-sym       (:from (first calls))
-                          ;; Filter out :refer usages (single line, row=end-row)
-                          actual-calls (filter (fn [call]
-                                                 (not= (:row call) (:end-row call)))
+                          ;; Filter out :refer usages (single line, row=end-row) and :cljs language
+                          actual-calls (filterv (fn [call]
+                                                  (and (not= (:row call) (:end-row call))
+                                                    (not= (:lang call) :cljs)))
                                          calls)]
 
                       ;; Match specs with clj-kondo call data
@@ -132,7 +136,7 @@
               (mapv (fn [spec call]
                       (let [test-name (:test-name spec)
                             var-name  (symbol (str "__"
-                                                (str/replace test-name #"[^\w\d\-\!\#\$\%\&\*\_\<\>\:\?\|]" "-")
+                                                (str/replace test-name #"[^\w\d\-\!\#\$\%\&\*\_\<\>\?\|]" "-")
                                                 "__"))
                             test-sym  (symbol (str ns-sym) (str var-name))]
                         {:test-var   test-sym
@@ -145,7 +149,7 @@
            (for [[filepath {:keys [specs ns-sym]}] parsed-files
                  {:keys [line test-name]} specs]
              (let [var-name (symbol (str "__"
-                                      (str/replace test-name #"[^\w\d\-\!\#\$\%\&\*\_\<\>\:\?\|]" "-")
+                                      (str/replace test-name #"[^\w\d\-\!\#\$\%\&\*\_\<\>\?\|]" "-")
                                       "__"))
                    test-sym (symbol (str ns-sym) (str var-name))]
                [test-sym

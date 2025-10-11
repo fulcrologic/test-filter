@@ -13,8 +13,12 @@
                                 lambdaisland/kaocha     {:mvn/version "1.91.1392"}
                                 clj-kondo/clj-kondo     {:mvn/version "2025.07.28"}}}
 
-           :dev  {:extra-paths ["src/dev" "src/demo"]
-                  :extra-deps  {org.clojure/tools.nrepl     {:mvn/version "0.2.13"}
-                                io.github.tonsky/clj-reload {:mvn/version "0.9.8"}}}
+           :clj-tests {:extra-paths ["src/test"]
+                       :main-opts   ["-m" "kaocha.runner"]
+                       :extra-deps  {lambdaisland/kaocha {:mvn/version "1.91.1392"}}}
 
-           :cli  {:main-opts ["-m" "com.fulcrologic.test-filter.cli"]}}}
+           :dev {:extra-paths ["src/dev" "src/demo"]
+                 :extra-deps  {org.clojure/tools.nrepl     {:mvn/version "0.2.13"}
+                               io.github.tonsky/clj-reload {:mvn/version "0.9.8"}}}
+
+           :cli {:main-opts ["-m" "com.fulcrologic.test-filter.cli"]}}}

@@ -191,8 +191,8 @@
               "creates the cache file"
               (.exists cache-file) => true
 
-              "contains the cache data"
-              (read-string (slurp cache-file)) => cache-data))))))
+              "can be loaded back successfully"
+              (cache/load-success-cache) => cache-data))))))
 
   (behavior "overwrites existing cache"
     (with-test-cache-files

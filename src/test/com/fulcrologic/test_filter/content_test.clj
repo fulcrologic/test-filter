@@ -2,7 +2,7 @@
   "Unit tests for content extraction and hashing."
   (:require [clojure.string :as str]
             [com.fulcrologic.test-filter.content :as content]
-            [fulcro-spec.core :refer [=> assertions behavior component specification]]))
+            [fulcro-spec.core :refer [=> assertions behavior specification]]))
 
 ;; -----------------------------------------------------------------------------
 ;; Test Data and Helpers
@@ -30,112 +30,8 @@
 ;; Tests
 ;; -----------------------------------------------------------------------------
 
-(specification "strip-docstring-from-form"
-  (behavior "removes docstring after function name"
-    (let [form   '(defn example "A docstring" [x] (* x 2))
-          result (content/strip-docstring-from-form form)]
-
-      (assertions
-        "removes the docstring"
-        result => '(defn example [x] (* x 2)))))
-
-  (behavior "removes docstring after args"
-    (let [form   '(defn example [x] "A docstring" (* x 2))
-          result (content/strip-docstring-from-form form)]
-
-      (assertions
-        "removes the docstring"
-        result => '(defn example [x] (* x 2)))))
-
-  (behavior "handles forms without docstrings"
-    (let [form   '(defn example [x] (* x 2))
-          result (content/strip-docstring-from-form form)]
-
-      (assertions
-        "returns form unchanged"
-        result => form)))
-
-  (behavior "only processes def* forms"
-    (let [form   '(let [x "string"] x)
-          result (content/strip-docstring-from-form form)]
-
-      (assertions
-        "returns non-def forms unchanged"
-        result => form)))
-
-  (behavior "handles various def forms"
-    (component "def"
-      (let [form   '(def ^:private config "Config value" {:a 1})
-            result (content/strip-docstring-from-form form)]
-
-        (assertions
-          "removes docstring from def"
-          result => '(def ^:private config {:a 1}))))
-
-    (component "defmethod has different docstring position"
-      (let [form   '(defmethod area :circle "Calculate circle area" [shape] 3.14)
-            result (content/strip-docstring-from-form form)]
-
-        (assertions
-          "defmethod docstring is after dispatch value, not name"
-          result => form)))))
-
-(specification "remove-comments"
-  (behavior "preserves quoted forms as-is"
-    (let [form   '(defn foo [x] (comment "debug") (* x 2))
-          result (content/remove-comments form)]
-
-      (assertions
-        "returns form unchanged"
-        result => form)))
-
-  (behavior "walks nested structures preserving them"
-    (component "vectors"
-      (let [form   '[1 2 3]
-            result (content/remove-comments form)]
-
-        (assertions
-          "returns vectors unchanged"
-          result => form)))
-
-    (component "maps"
-      (let [form   '{:a 1 :b 2 :c 3}
-            result (content/remove-comments form)]
-
-        (assertions
-          "returns maps unchanged"
-          result => form)))
-
-    (component "sets"
-      (let [form   '#{1 2 3}
-            result (content/remove-comments form)]
-
-        (assertions
-          "returns sets unchanged"
-          result => form))))
-
-  (behavior "preserves non-comment forms"
-    (let [form   '(defn example [x] (+ x 2))
-          result (content/remove-comments form)]
-
-      (assertions
-        "returns unchanged when no comments"
-        result => form))))
-
-(specification "normalize-form-to-string"
-  (behavior "converts form to consistent string representation"
-    (let [form   '(defn foo [x] (* x 2))
-          result (content/normalize-form-to-string form)]
-
-      (assertions
-        "returns a string"
-        (string? result) => true
-
-        "uses pr-str format"
-        (str/includes? result "defn") => true))))
-
 (specification "normalize-content"
-  (behavior "strips docstrings and normalizes formatting"
+  (behavior "strips docstrings from def forms"
     (let [result (content/normalize-content sample-source)]
 
       (assertions
@@ -147,17 +43,98 @@
 
         "contains function logic"
         (str/includes? result "defn") => true
-        (str/includes? result "calculate") => true)))
+        (str/includes? result "calculate") => true
+        (str/includes? result "+ x y") => true)))
 
-  (behavior "produces same output regardless of input formatting"
-    (let [formatted "(defn calculate\n  \"Doc\"\n  [x y]\n  (+ x y))"
-          compact   "(defn calculate \"Doc\" [x y] (+ x y))"
-          result1   (content/normalize-content formatted)
-          result2   (content/normalize-content compact)]
+  (behavior "produces same output regardless of docstring position"
+    (let [doc-after-name "(defn calculate \"Doc\" [x y] (+ x y))"
+          doc-after-args "(defn calculate [x y] \"Doc\" (+ x y))"
+          no-doc         "(defn calculate [x y] (+ x y))"
+          hash1          (content/hash-content doc-after-name)
+          hash2          (content/hash-content doc-after-args)
+          hash3          (content/hash-content no-doc)]
 
       (assertions
-        "normalized versions are identical"
-        result1 => result2)))
+        "all three produce same hash"
+        hash1 => hash2
+        hash2 => hash3)))
+
+  (behavior "handles docstrings with escaped quotes"
+    (let [with-escaped "(defn foo \"This is a \\\"docstring\\\" with quotes\" [x] (+ x 1))"
+          without-doc  "(defn foo [x] (+ x 1))"
+          result       (content/normalize-content with-escaped)]
+
+      (assertions
+        "removes docstring with escaped quotes"
+        (str/includes? result "docstring") => false
+        (str/includes? result "(defn foo [x] (+ x 1))") => true
+
+        "produces same hash as version without docstring"
+        (content/hash-content with-escaped) => (content/hash-content without-doc))))
+
+  (behavior "handles multiline docstrings"
+    (let [multiline   "(defn bar\n  \"This is a docstring\n  that spans multiple\n  lines with details\"\n  [x y]\n  (* x y))"
+          without-doc "(defn bar [x y] (* x y))"
+          result      (content/normalize-content multiline)]
+
+      (assertions
+        "removes multiline docstring"
+        (str/includes? result "docstring") => false
+        (str/includes? result "spans") => false
+        (str/includes? result "(defn bar [x y] (* x y))") => true
+
+        "produces same hash as version without docstring"
+        (content/hash-content multiline) => (content/hash-content without-doc))))
+
+  (behavior "handles multiline docstrings with escaped quotes"
+    (let [complex     "(defn baz\n  \"Multi-line with \\\"escaped\\\" quotes\n  on multiple lines\"\n  [a b c]\n  (+ a b c))"
+          without-doc "(defn baz [a b c] (+ a b c))"
+          result      (content/normalize-content complex)]
+
+      (assertions
+        "removes complex docstring"
+        (str/includes? result "Multi-line") => false
+        (str/includes? result "escaped") => false
+        (str/includes? result "(defn baz [a b c] (+ a b c))") => true
+
+        "produces same hash as version without docstring"
+        (content/hash-content complex) => (content/hash-content without-doc))))
+
+  (behavior "preserves string literals that are not docstrings"
+    (let [with-string "(defn greet [name] (str \"Hello, \" name))"
+          result      (content/normalize-content with-string)]
+
+      (assertions
+        "keeps string literals in function body"
+        (str/includes? result "\"Hello, \"") => true
+        (str/includes? result "name") => true)))
+
+  (behavior "preserves source text exactly (no reader expansion)"
+    (let [code-with-syntax-quote "(p `get-entity-min-issue-date (foo))"
+          normalized             (content/normalize-content code-with-syntax-quote)]
+
+      (assertions
+        "does not expand syntax-quote"
+        (str/includes? normalized "`get-entity-min-issue-date") => true
+        (str/includes? normalized "user/get-entity-min-issue-date") => false)))
+
+  (behavior "produces deterministic hashes for syntax-quoted symbols"
+    (let [code  "(p `get-entity-min-issue-date (foo))"
+          hash1 (content/hash-content code)
+          hash2 (content/hash-content code)]
+
+      (assertions
+        "hash is stable across multiple calls"
+        hash1 => hash2)))
+
+  (behavior "produces deterministic hashes for anonymous functions"
+    (let [code  "(def underscore #(str/replace % #\"-\" \"_\"))"
+          hash1 (content/hash-content code)
+          hash2 (content/hash-content code)]
+
+      (assertions
+        "hash is stable across multiple calls"
+        hash1 => hash2)))
 
   (behavior "handles nil input"
     (let [result (content/normalize-content nil)]
@@ -166,12 +143,12 @@
         "returns nil"
         result => nil)))
 
-  (behavior "falls back to original on parse errors"
+  (behavior "falls back to original on processing errors"
     (let [invalid "(defn broken [x"
           result  (content/normalize-content invalid)]
 
       (assertions
-        "returns original text when parsing fails"
+        "returns original text when processing fails"
         result => invalid))))
 
 (specification "sha256"
@@ -213,25 +190,33 @@
 
 (specification "hash-content"
   (behavior "combines normalization and hashing"
-    (let [hash1 (content/hash-content sample-source)
-          hash2 (content/hash-content sample-source-no-docstring)]
+    (let [with-doc    "(defn calculate \"Doc\" [x y] (+ x y))"
+          without-doc "(defn calculate [x y] (+ x y))"
+          hash1       (content/hash-content with-doc)
+          hash2       (content/hash-content without-doc)]
 
       (assertions
         "returns hex string"
         (string? hash1) => true
 
-        "docstring changes don't affect hash"
+        "docstring removal produces same hash when formatting is identical"
         hash1 => hash2)))
 
-  (behavior "ignores formatting differences"
-    (let [formatted "(defn foo [x]\n  (* x 2))"
-          compact   "(defn foo [x] (* x 2))"
-          hash1     (content/hash-content formatted)
-          hash2     (content/hash-content compact)]
+  (behavior "ignores whitespace differences (Clojure is whitespace-agnostic)"
+    (let [compact   "(defn foo [x] (* x 2))"
+          spaced    "(defn foo [x]  (*  x  2))"
+          multiline "(defn foo\n  [x]\n  (* x 2))"
+          tabs      "(defn\tfoo\t[x]\t(*\tx\t2))"
+          hash1     (content/hash-content compact)
+          hash2     (content/hash-content spaced)
+          hash3     (content/hash-content multiline)
+          hash4     (content/hash-content tabs)]
 
       (assertions
-        "formatting doesn't affect hash"
-        hash1 => hash2)))
+        "all whitespace variations produce same hash"
+        hash1 => hash2
+        hash2 => hash3
+        hash3 => hash4)))
 
   (behavior "detects actual logic changes"
     (let [original "(defn foo [x] (* x 2))"

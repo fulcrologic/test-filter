@@ -83,13 +83,23 @@
   "Loads the success cache from disk.
 
   Returns a map of symbol -> content-hash representing the last verified state.
-  Returns empty map if cache doesn't exist."
+  Returns empty map if cache doesn't exist.
+
+  Note: Symbols are stored as strings to avoid EDN parsing issues with symbols
+  containing special characters like :: (which fulcro-spec generates)."
   []
   (p `load-success-cache
     (let [cache-file (success-cache-path)]
       (if (.exists (io/file cache-file))
         (try
-          (edn/read-string (slurp cache-file))
+          (let [raw-data (edn/read-string (slurp cache-file))]
+            ;; Convert string keys back to symbols
+            (into {}
+              (map (fn [[k v]]
+                     (if (string? k)
+                       [(symbol k) v]
+                       [k v]))
+                raw-data)))
           (catch Exception e
             (println "Warning: Failed to load success cache:" (.getMessage e))
             {}))
@@ -98,11 +108,19 @@
 (defn save-success-cache!
   "Saves the success cache to disk.
 
-  cache-data should be a map of symbol -> content-hash."
+  cache-data should be a map of symbol -> content-hash.
+
+  Note: Symbols are converted to strings before saving to avoid EDN parsing
+  issues with symbols containing special characters like :: (which fulcro-spec generates)."
   [cache-data]
   (p `save-success-cache!
-    (let [cache-file (success-cache-path)]
-      (spit cache-file (pr-str cache-data))
+    (let [cache-file   (success-cache-path)
+          ;; Convert symbol keys to strings to avoid EDN parsing issues
+          string-keyed (into {}
+                         (map (fn [[k v]]
+                                [(str k) v])
+                           cache-data))]
+      (spit cache-file (pr-str string-keyed))
       cache-data)))
 
 (defn update-success-cache!

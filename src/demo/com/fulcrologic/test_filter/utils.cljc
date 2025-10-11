@@ -32,3 +32,9 @@
   [s]
   #?(:clj  (Double/parseDouble s)
      :cljs (js/parseFloat s)))
+
+(defn log-and-parse
+  "Logs a message and then parses a number. This function has NO test coverage."
+  [msg s]
+  (log-message msg)
+  (parse-number s))

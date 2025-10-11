@@ -1,0 +1,394 @@
+= GitLab CI Integration Guide
+:toc:
+:toclevels: 3
+
+== Overview
+
+This guide explains how to integrate Test Filter into a GitLab CI/CD pipeline using GitLab's artifact storage system.
+This approach requires no modifications to the Test Filter codebase and uses standard GitLab features.
+
+== Workflow Model
+
+This integration assumes a **branch-based development workflow** where:
+
+* **`develop`** is the main line of development (the integration branch)
+* **Merge Requests (MRs)** branch from `develop`, are worked on, tested, and merged back to `develop`
+* The success cache (`.test-filter-success.edn`) is managed via GitLab artifacts, not committed to the repository
+
+== Two-Branch Strategy
+
+=== Develop Branch: Full Test Suite
+
+The `develop` branch always runs the **complete test suite** to ensure comprehensive coverage and maintain a reliable baseline.
+
+**Workflow:**
+
+1. Analyze the codebase structure
+2. Run ALL tests
+3. Mark all tests as verified (updates success cache)
+4. Store success cache as a GitLab artifact
+
+The artifact from the latest successful `develop` pipeline serves as the baseline for detecting changes in MRs.
+
+=== Merge Request Branch: Selected Tests Only
+
+MR branches run **only the tests affected by changes** to provide fast feedback.
+
+**Workflow:**
+
+1. Fetch the success cache from the latest successful `develop` build (via GitLab artifacts API)
+2. Analyze the current codebase
+3. Select tests affected by changes (compares current state vs. baseline from `develop`)
+4. Run only the selected tests
+5. Do NOT mark as verified (cache is not updated)
+
+Multiple pushes to the same MR repeat this process, always comparing against the `develop` baseline.
+
+=== Post-Merge Behavior
+
+When an MR merges back to `develop`:
+
+1. The merge triggers the `develop` pipeline
+2. All tests run on the merged code
+3. On success, the success cache is updated and stored as an artifact
+4. The new artifact becomes the baseline for future MRs
+
+== Implementation
+
+=== Option 1: Inline Shell Script (Simple)
+
+Add this configuration to your `.gitlab-ci.yml`:
+
+[source,yaml]
+----
+variables:
+  SUCCESS_CACHE_FILE: .test-filter-success.edn
+  DEVELOP_JOB_NAME: test:develop
+
+stages:
+  - test
+
+# Develop branch: Run all tests, save success cache
+test:develop:
+  stage: test
+  only:
+    - develop
+  script:
+    - clojure -M:cli analyze
+    - clojure -M:test -m kaocha.runner
+    - clojure -M:cli mark-verified
+  artifacts:
+    paths:
+      - .test-filter-success.edn
+    expire_in: never  # Keep indefinitely
+
+# MR branch: Fetch cache, run selected tests
+test:mr:
+  stage: test
+  only:
+    - merge_requests
+  before_script:
+    - |
+      # Try to fetch success cache from latest develop build
+      echo "Fetching success cache from develop artifacts..."
+
+      HTTP_CODE=$(curl --location --silent --output $SUCCESS_CACHE_FILE \
+        --write-out "%{http_code}" \
+        --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs/artifacts/develop/raw/${SUCCESS_CACHE_FILE}?job=${DEVELOP_JOB_NAME}")
+
+      if [ "$HTTP_CODE" = "200" ]; then
+        echo "✓ Success cache fetched from develop artifacts"
+      else
+        echo "⚠ Could not fetch from artifacts (HTTP $HTTP_CODE)"
+        if [ -f "$SUCCESS_CACHE_FILE" ]; then
+          echo "✓ Using committed cache as fallback"
+        else
+          echo "⚠ No cache available - will run all tests"
+        fi
+      fi
+  script:
+    - clojure -M:cli analyze
+    - TESTS=$(clojure -M:cli select -o kaocha)
+    - |
+      if [ -z "$TESTS" ]; then
+        echo "No tests affected by changes"
+      else
+        echo "Running affected tests: $TESTS"
+        clojure -M:test -m kaocha.runner $TESTS
+      fi
+----
+
+=== Option 2: Reusable Script (Recommended)
+
+For cleaner configuration and reusability across projects, create a helper script.
+
+==== Create `scripts/fetch-success-cache.sh`
+
+[source,bash]
+----
+#!/bin/bash
+set -e
+
+# Configuration with defaults
+SUCCESS_CACHE_FILE="${SUCCESS_CACHE_FILE:-.test-filter-success.edn}"
+DEVELOP_BRANCH="${DEVELOP_BRANCH:-develop}"
+DEVELOP_JOB_NAME="${DEVELOP_JOB_NAME:-test:develop}"
+
+echo "Fetching success cache from GitLab artifacts..."
+echo "  Project: ${CI_PROJECT_ID}"
+echo "  Branch: ${DEVELOP_BRANCH}"
+echo "  Job: ${DEVELOP_JOB_NAME}"
+echo "  File: ${SUCCESS_CACHE_FILE}"
+
+# Download from GitLab artifacts API
+HTTP_CODE=$(curl --location --silent \
+  --output "$SUCCESS_CACHE_FILE" \
+  --write-out "%{http_code}" \
+  --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+  "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs/artifacts/${DEVELOP_BRANCH}/raw/${SUCCESS_CACHE_FILE}?job=${DEVELOP_JOB_NAME}")
+
+if [ "$HTTP_CODE" = "200" ]; then
+  echo "✓ Success cache fetched from artifacts"
+  exit 0
+elif [ -f "$SUCCESS_CACHE_FILE" ]; then
+  echo "⚠ Could not fetch from artifacts (HTTP $HTTP_CODE)"
+  echo "✓ Using committed cache as fallback"
+  exit 0
+else
+  echo "⚠ Could not fetch from artifacts (HTTP $HTTP_CODE)"
+  echo "⚠ No cache available - will run all tests"
+  exit 0
+fi
+----
+
+Make the script executable:
+
+[source,bash]
+----
+chmod +x scripts/fetch-success-cache.sh
+----
+
+==== Simplified `.gitlab-ci.yml`
+
+[source,yaml]
+----
+variables:
+  SUCCESS_CACHE_FILE: .test-filter-success.edn
+  DEVELOP_BRANCH: develop
+  DEVELOP_JOB_NAME: test:develop
+
+stages:
+  - test
+
+test:develop:
+  stage: test
+  only:
+    - develop
+  script:
+    - clojure -M:cli analyze
+    - clojure -M:test -m kaocha.runner
+    - clojure -M:cli mark-verified
+  artifacts:
+    paths:
+      - .test-filter-success.edn
+    expire_in: never
+
+test:mr:
+  stage: test
+  only:
+    - merge_requests
+  before_script:
+    - bash scripts/fetch-success-cache.sh
+  script:
+    - clojure -M:cli analyze
+    - TESTS=$(clojure -M:cli select -o kaocha)
+    - |
+      if [ -z "$TESTS" ]; then
+        echo "No tests affected by changes"
+      else
+        echo "Running affected tests: $TESTS"
+        clojure -M:test -m kaocha.runner $TESTS
+      fi
+----
+
+== How It Works
+
+=== GitLab Artifacts API
+
+The integration uses GitLab's https://docs.gitlab.com/api/job_artifacts/[Job Artifacts API] to fetch the success cache from the latest successful pipeline on `develop`.
+
+**API Endpoint:**
+
+----
+GET /projects/:id/jobs/artifacts/:ref_name/raw/*artifact_path?job=job_name
+----
+
+**Example:**
+
+----
+https://gitlab.com/api/v4/projects/12345/jobs/artifacts/develop/raw/.test-filter-success.edn?job=test:develop
+----
+
+=== Environment Variables
+
+GitLab CI automatically provides these environment variables (no configuration needed):
+
+* `CI_JOB_TOKEN` - Authentication token for API access
+* `CI_API_V4_URL` - GitLab API base URL (e.g., `https://gitlab.com/api/v4`)
+* `CI_PROJECT_ID` - Numeric project ID
+
+=== Fallback Strategy
+
+The system gracefully handles missing artifacts:
+
+1. **Primary:** Fetch from GitLab artifacts (latest successful `develop` build)
+2. **Fallback:** Use committed cache file (if present in the repository)
+3. **Last Resort:** If no cache exists, Test Filter runs all tests
+
+This ensures CI never fails due to cache unavailability.
+
+== Configuration Options
+
+=== Custom Branch Name
+
+If your main integration branch is not `develop`:
+
+[source,yaml]
+----
+variables:
+  DEVELOP_BRANCH: main  # or master, trunk, etc.
+----
+
+=== Custom Job Name
+
+If your develop test job has a different name:
+
+[source,yaml]
+----
+variables:
+  DEVELOP_JOB_NAME: test:all  # or integration-tests, etc.
+----
+
+=== Artifact Expiration
+
+By default, artifacts are kept indefinitely (`expire_in: never`).
+You can change this:
+
+[source,yaml]
+----
+artifacts:
+  paths:
+    - .test-filter-success.edn
+  expire_in: 30 days  # Keep for 30 days
+----
+
+**Note:** If artifacts expire, the system will fall back to the committed cache.
+
+== Benefits of This Approach
+
+✅ **No code changes** - Test Filter remains focused on its core functionality
+
+✅ **No write access needed** - CI never commits to the repository
+
+✅ **Built-in authentication** - Uses `CI_JOB_TOKEN` (no extra credentials)
+
+✅ **Clean repository** - No bot commits cluttering the history
+
+✅ **Fast MR pipelines** - Only affected tests run, providing quick feedback
+
+✅ **Reliable baseline** - Success cache from latest successful `develop` build
+
+✅ **Graceful degradation** - Falls back to committed cache if artifacts unavailable
+
+✅ **Easy customization** - Standard shell scripts, easy to modify per project
+
+== Troubleshooting
+
+=== "Could not fetch from artifacts (HTTP 404)"
+
+**Cause:** No successful pipeline artifacts exist on `develop` yet.
+
+**Solution:** Merge to `develop` and let the `test:develop` job run successfully.
+Subsequent MRs will then be able to fetch the artifact.
+
+**Workaround:** Commit an initial `.test-filter-success.edn` file as a fallback until the first develop pipeline completes.
+
+=== "Could not fetch from artifacts (HTTP 403)"
+
+**Cause:** Job token doesn't have permission to access artifacts.
+
+**Solution:** Ensure your GitLab project settings allow job token access to the API.
+This is typically enabled by default.
+
+=== All tests running on MR
+
+**Causes:**
+
+1. No success cache available (neither artifact nor committed file)
+2. First run after initial setup
+3. Significant changes that affect many tests
+
+**Expected behavior:** After the first successful `develop` pipeline, subsequent MRs should run only affected tests.
+
+=== Script fails with "command not found: curl"
+
+**Cause:** Base Docker image doesn't include `curl`.
+
+**Solution:** Use an image with `curl` pre-installed, or add it:
+
+[source,yaml]
+----
+before_script:
+  - apt-get update && apt-get install -y curl
+  - bash scripts/fetch-success-cache.sh
+----
+
+== Additional Considerations
+
+=== Monorepos or Multi-Project Repositories
+
+If you have multiple projects in a monorepo, you can namespace the success cache:
+
+[source,yaml]
+----
+variables:
+  SUCCESS_CACHE_FILE: .test-filter-success-projectA.edn
+----
+
+=== Integration Tests
+
+Integration tests (namespaces matching `*.integration.*`) are handled specially by Test Filter.
+You may want separate jobs:
+
+[source,yaml]
+----
+test:unit:mr:
+  # ... fetch cache, run selected unit tests
+
+test:integration:mr:
+  # ... fetch cache, run selected integration tests
+  # or always run all integration tests
+----
+
+=== Parallel Test Execution
+
+For large test suites, consider splitting tests across parallel jobs:
+
+[source,yaml]
+----
+test:mr:
+  parallel: 4
+  script:
+    - TESTS=$(clojure -M:cli select -o kaocha)
+    - # Split $TESTS across parallel nodes
+----
+
+See https://docs.gitlab.com/ee/ci/yaml/#parallel[GitLab's parallel documentation] for details.
+
+== See Also
+
+* link:CLAUDE.md[CLAUDE.md] - Project overview and development guide
+* link:README.adoc[README.adoc] - Test Filter general documentation
+* https://docs.gitlab.com/api/job_artifacts/[GitLab Job Artifacts API]
+* https://docs.gitlab.com/ci/yaml/[GitLab CI/CD YAML Reference]

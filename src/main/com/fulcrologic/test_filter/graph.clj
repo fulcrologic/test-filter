@@ -3,6 +3,7 @@
   (:require
     [clojure.set :as set]
     [clojure.string :as str]
+    [com.fulcrologic.test-filter.analyzer :as analyzer]
     [loom.alg :as alg]
     [loom.graph :as lg]
     [taoensso.tufte :refer [p]]))
@@ -184,6 +185,62 @@
       ;; Combine all affected tests
       (p ::final-union
         (set/union integration-tests affected-targeted affected-regular)))))
+
+(defn find-untested-usages
+  "Finds direct dependents of changed symbols that have no path to any test.
+
+  For each changed symbol, returns the set of symbols that directly use it
+  but are not covered by any test (i.e., no test transitively depends on them).
+
+  This helps identify coverage gaps: code that depends on changed functions
+  but isn't being tested.
+
+  Args:
+    graph - loom directed graph (or map with :graph and :reverse-index)
+    changed-symbols - set of symbols that have changed
+    symbol-graph - original symbol graph with node metadata
+
+  Returns:
+    Map of changed-symbol -> #{untested-dependent-symbols}
+    Only includes entries where there are untested dependents."
+  [graph changed-symbols symbol-graph]
+  (p `find-untested-usages
+    (let [dep-graph     (if (map? graph) (or (:graph graph) graph) graph)
+          reverse-index (when (map? graph) (:reverse-index graph))
+          test-symbols  (into #{}
+                          (map first)
+                          (analyzer/find-test-vars symbol-graph))
+          ;; Helper to check if a symbol is test-related
+          test-related? (fn [sym]
+                          (or (test-symbols sym)
+                            ;; Also exclude test namespace SYMBOLS (not test vars!)
+                            ;; Namespace symbols have no namespace part and name ends with -test
+                            (let [ns-str   (namespace sym)
+                                  name-str (name sym)]
+                              (and (nil? ns-str) (str/ends-with? name-str "-test")))))]
+
+      (into {}
+        (keep (fn [changed-sym]
+                (when (lg/has-node? dep-graph changed-sym)
+                  ;; Get direct dependents (predecessors, since edge A->B means "A uses B")
+                  (let [direct-dependents (lg/predecessors dep-graph changed-sym)
+                        ;; Filter to those with no test coverage
+                        untested          (into #{}
+                                            (filter (fn [dep-sym]
+                                                      ;; Exclude tests and test-related symbols
+                                                      (and (not (test-related? dep-sym))
+                                                        ;; Check if no tests depend on this symbol
+                                                        (if reverse-index
+                                                          (empty? (get reverse-index dep-sym))
+                                                          ;; Fallback: check all tests for paths
+                                                          (not-any? (fn [test-sym]
+                                                                      (let [deps (transitive-dependencies dep-graph test-sym)]
+                                                                        (contains? deps dep-sym)))
+                                                            test-symbols)))))
+                                            direct-dependents)]
+                    (when (seq untested)
+                      [changed-sym untested])))))
+        changed-symbols))))
 
 ;; -----------------------------------------------------------------------------
 ;; Graph Utilities

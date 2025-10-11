@@ -2,8 +2,6 @@
   "Content extraction and hashing for detecting semantic changes in code."
   (:require
     [clojure.string :as str]
-    [clojure.tools.reader :as reader]
-    [clojure.tools.reader.reader-types :as reader-types]
     [taoensso.tufte :refer [p]])
   (:import (java.nio.charset StandardCharsets)
            (java.security MessageDigest)))
@@ -65,99 +63,198 @@
       nil)))
 
 ;; -----------------------------------------------------------------------------
-;; Content Normalization
+;; Content Normalization - String-based Parser
 ;; -----------------------------------------------------------------------------
 
-(defn strip-docstring-from-form
-  "Removes docstring from a def* form.
+(defn- find-string-end
+  "Finds the end position of a string starting at idx (after opening quote).
+  Returns the index after the closing quote, or nil if not found.
+  Handles escaped quotes correctly."
+  [s idx]
+  (loop [i idx]
+    (when (< i (count s))
+      (let [ch (get s i)]
+        (cond
+          (= ch \\) (recur (+ i 2))                         ; Skip escaped character
+          (= ch \") (inc i)                                 ; Found closing quote
+          :else (recur (inc i)))))))
 
-  Docstrings can appear in two positions:
-  1. After the name, before args: (defn name \"doc\" [args] body)
-  2. After args, before body: (defn name [args] \"doc\" body)
+(defn- skip-whitespace
+  "Returns index of first non-whitespace character starting from idx."
+  [s idx]
+  (loop [i idx]
+    (if (and (< i (count s))
+          (Character/isWhitespace (char (get s i))))
+      (recur (inc i))
+      i)))
 
-  The reader may parse them differently depending on formatting.
+(defn- find-matching-bracket
+  "Finds the closing bracket matching the opening bracket at idx.
+  Returns the index after the closing bracket, or nil if not found.
+  Handles strings and nested brackets correctly."
+  [s idx]
+  (let [open-ch  (get s idx)
+        close-ch (case open-ch
+                   \[ \]
+                   \( \)
+                   \{ \}
+                   nil)]
+    (when close-ch
+      (loop [i     (inc idx)
+             depth 1]
+        (when (< i (count s))
+          (let [ch (get s i)]
+            (cond
+              ;; Handle strings - skip to end
+              (= ch \")
+              (if-let [end (find-string-end s (inc i))]
+                (recur end depth)
+                nil)
 
-  Args:
-    form - A Clojure form (list)
+              ;; Handle nested brackets
+              (= ch open-ch)
+              (recur (inc i) (inc depth))
 
-  Returns:
-    The form without the docstring"
-  [form]
-  (if (and (seq? form)
-        (symbol? (first form))
-        (str/starts-with? (name (first form)) "def"))
-    (let [[def-sym name-sym & rest-parts] form]
-      (cond
-        ;; Case 1: docstring before args (defn foo "doc" [x] ...)
-        (and (seq rest-parts) (string? (first rest-parts)))
-        (list* def-sym name-sym (rest rest-parts))
+              (= ch close-ch)
+              (if (= depth 1)
+                (inc i)                                     ; Found matching close
+                (recur (inc i) (dec depth)))
 
-        ;; Case 2: docstring after args (defn foo [x] "doc" ...)
-        ;; This happens when docstring is on a separate line in source
-        (and (>= (count rest-parts) 2)
-          (vector? (first rest-parts))
-          (string? (second rest-parts)))
-        (list* def-sym name-sym (first rest-parts) (drop 2 rest-parts))
+              :else
+              (recur (inc i) depth))))))))
 
-        ;; No docstring, return as-is
-        :else
-        form))
-    ;; Not a def form, return as-is
-    form))
+(defn- remove-docstring-from-def
+  "Removes docstring from a def* form in source text.
+  Returns the modified source text, or original if no docstring found.
 
-(defn remove-comments
-  "Walks a form and removes comment forms."
-  [form]
-  (cond
-    (seq? form)
-    (let [result (keep remove-comments form)]
-      (if (seq result) (apply list result) nil))
+  Handles:
+  - (defn name \"doc\" [args] ...) - after name
+  - (defn name [args] \"doc\" ...) - after args"
+  [s]
+  (let [len (count s)]
+    (loop [i      0
+           result (StringBuilder.)]
+      (if (>= i len)
+        (str result)
+        (let [ch (get s i)]
+          (cond
+            ;; Handle strings - copy them through
+            (= ch \")
+            (if-let [end (find-string-end s (inc i))]
+              (do
+                (.append result (subs s i end))
+                (recur end result))
+              (recur (inc i) result))
 
-    (vector? form)
-    (vec (keep remove-comments form))
+            ;; Look for (def* pattern
+            (and (= ch \()
+              (< (inc i) len)
+              (= \d (get s (inc i))))
+            (let [def-start i
+                  ;; Find end of def* symbol
+                  def-end   (loop [j (inc i)]
+                              (if (and (< j len)
+                                    (let [c (get s j)]
+                                      (or (Character/isLetterOrDigit (char c))
+                                        (= c \-))))
+                                (recur (inc j))
+                                j))]
+              ;; Check if it's actually a def* form
+              (if (and (str/starts-with? (subs s (inc i) def-end) "def")
+                    (< def-end len)
+                    (Character/isWhitespace (get s def-end)))
+                ;; It's a def form - look for docstring
+                (let [after-def  (skip-whitespace s def-end)
+                      ;; Find end of name symbol
+                      name-end   (loop [j after-def]
+                                   (if (and (< j len)
+                                         (let [c (get s j)]
+                                           (not (Character/isWhitespace (char c)))))
+                                     (recur (inc j))
+                                     j))
+                      after-name (skip-whitespace s name-end)]
+                  ;; Check if there's a docstring after name
+                  (if (and (< after-name len)
+                        (= \" (get s after-name)))
+                    ;; Found docstring after name
+                    (if-let [doc-end (find-string-end s (inc after-name))]
+                      (do
+                        ;; Copy everything up to docstring
+                        (.append result (subs s i after-name))
+                        ;; Skip docstring, continue after it
+                        (recur doc-end result))
+                      (do
+                        (.append result ch)
+                        (recur (inc i) result)))
+                    ;; No docstring after name, check after args
+                    (if (and (< after-name len)
+                          (= \[ (get s after-name)))
+                      (if-let [args-end (find-matching-bracket s after-name)]
+                        (let [after-args (skip-whitespace s args-end)]
+                          (if (and (< after-args len)
+                                (= \" (get s after-args)))
+                            ;; Found docstring after args
+                            (if-let [doc-end (find-string-end s (inc after-args))]
+                              (do
+                                ;; Copy everything up to docstring
+                                (.append result (subs s i after-args))
+                                ;; Skip docstring, continue after it
+                                (recur doc-end result))
+                              (do
+                                (.append result ch)
+                                (recur (inc i) result)))
+                            ;; No docstring after args
+                            (do
+                              (.append result ch)
+                              (recur (inc i) result))))
+                        (do
+                          (.append result ch)
+                          (recur (inc i) result)))
+                      ;; No args vector
+                      (do
+                        (.append result ch)
+                        (recur (inc i) result)))))
+                ;; Not a def form
+                (do
+                  (.append result ch)
+                  (recur (inc i) result))))
 
-    (map? form)
-    (into {} (keep (fn [[k v]]
-                     (let [new-k (remove-comments k)
-                           new-v (remove-comments v)]
-                       (when (and new-k new-v)
-                         [new-k new-v])))
-               form))
-
-    (set? form)
-    (set (keep remove-comments form))
-
-    :else
-    form))
-
-(defn normalize-form-to-string
-  "Converts a form back to a string with normalized formatting.
-
-  Uses pr-str which gives consistent output regardless of original formatting."
-  [form]
-  (when form
-    (pr-str form)))
+            ;; Regular character
+            :else
+            (do
+              (.append result ch)
+              (recur (inc i) result))))))))
 
 (defn normalize-content
   "Normalizes source code content for semantic comparison.
 
-  Uses the EDN reader to parse the code, removes docstrings and comments,
-  then re-emits with pr-str for consistent formatting."
+  This function:
+  1. Removes docstrings from def* forms using a proper string parser
+  2. Normalizes whitespace (since Clojure is whitespace-agnostic)
+
+  Removes docstrings from these positions:
+  - (defn name \"doc\" [args] ...) - after name
+  - (defn name [args] \"doc\" ...) - after args
+  - (def name \"doc\" value) - after name
+
+  Note: Uses string-based parsing to preserve exact source,
+  avoiding non-deterministic reader expansions."
   [source-text]
   (p `normalize-content
     (when source-text
       (try
-        (let [;; Parse the source text
-              rdr  (reader-types/source-logging-push-back-reader source-text)
-              form (reader/read {:read-cond :preserve :eof nil} rdr)]
-          (when form
-            (-> form
-              strip-docstring-from-form
-              remove-comments
-              normalize-form-to-string)))
+        (let [;; Remove docstrings using proper parser
+              without-docs (remove-docstring-from-def source-text)
+              ;; Normalize all whitespace to single spaces
+              ;; This makes hashing whitespace-agnostic (as Clojure code is just data)
+              normalized   (-> without-docs
+                             ;; Replace all whitespace sequences with single space
+                             (str/replace #"\s+" " ")
+                             ;; Trim leading/trailing whitespace
+                             str/trim)]
+          normalized)
         (catch Exception e
-          ;; If parsing fails, fall back to original text
-          ;; This can happen with incomplete forms or syntax errors
+          ;; If processing fails, return original
           source-text)))))
 
 ;; -----------------------------------------------------------------------------
