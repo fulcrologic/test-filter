@@ -269,7 +269,7 @@
                                                   {:analysis {:var-definitions [] :var-usages []}})
                     analyzer/build-symbol-graph (fn [_] mock-symbol-graph)
                     content/hash-graph-symbols  (fn [_] {'app.core/foo "hash1"})
-                    cache/save-graph!           (fn [graph hashes paths]
+                    cache/save-graph!           (fn [graph hashes paths reverse]
                                                   (reset! saved true)
                                                   nil)]
         (let [result (core/analyze! :paths ["src"] :verbose false)]

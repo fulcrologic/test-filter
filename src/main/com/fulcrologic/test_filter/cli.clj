@@ -32,11 +32,12 @@
         "Usage: clojure -M:cli [command] [options]"
         ""
         "Commands:"
-        "  analyze        Analyze codebase and update analysis cache"
-        "  select         Select tests to run based on changes"
-        "  mark-verified  Mark tests as verified (updates success cache)"
-        "  clear          Clear cache(s)"
-        "  status         Show cache status"
+        "  analyze              Analyze codebase and update analysis cache"
+        "  select               Select tests to run based on changes"
+        "  mark-verified        Mark tests as verified (updates success cache)"
+        "  mark-all-verified    Mark ALL symbols as verified (for initialization)"
+        "  clear                Clear cache(s)"
+        "  status               Show cache status"
         ""
         "Options:"
         options-summary
@@ -44,6 +45,10 @@
         "Examples:"
         "  # Analyze codebase and cache results"
         "  clojure -M:cli analyze"
+        ""
+        "  # Initialize on a large existing codebase"
+        "  clojure -M:cli analyze"
+        "  clojure -M:cli mark-all-verified"
         ""
         "  # Select tests affected by changes since last analysis"
         "  clojure -M:cli select"
@@ -93,9 +98,9 @@
 
       (empty? arguments)
       {:action :error
-       :errors ["No command specified. Use 'analyze', 'select', 'mark-verified', 'clear', or 'status'."]}
+       :errors ["No command specified. Use 'analyze', 'select', 'mark-verified', 'mark-all-verified', 'clear', or 'status'."]}
 
-      (not (#{"analyze" "select" "mark-verified" "clear" "status"} (first arguments)))
+      (not (#{"analyze" "select" "mark-verified" "mark-all-verified" "clear" "status"} (first arguments)))
       {:action :error
        :errors [(str "Unknown command: " (first arguments))]}
 
@@ -205,6 +210,24 @@
         (.printStackTrace e))
       1)))
 
+(defn run-mark-all-verified [options]
+  (try
+    (let [graph (cache/load-graph)]
+      (if-not graph
+        (do
+          (println "Error: No analysis cache found. Run 'analyze' first.")
+          1)
+        (let [count (core/mark-all-verified! graph)]
+          (println "=== All Symbols Marked as Verified ===")
+          (println "Verified symbols:" count)
+          (println "Success cache updated:" (cache/success-cache-path))
+          0)))
+    (catch Exception e
+      (println "Error marking all as verified:" (.getMessage e))
+      (when (:verbose options)
+        (.printStackTrace e))
+      1)))
+
 (defn run-status [options]
   (try
     (let [status         (cache/cache-status)
@@ -273,6 +296,9 @@
 
       :mark-verified
       (System/exit (run-mark-verified options))
+
+      :mark-all-verified
+      (System/exit (run-mark-all-verified options))
 
       :clear
       (System/exit (run-clear options))

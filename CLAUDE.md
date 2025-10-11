@@ -304,3 +304,8 @@ The project uses Kaocha as the test runner. The demo tests in `src/demo/` can be
 - Prefer writing tests using @docs/ai/writing-tests.md unless the user says otherwise
 - Explore library source code and docs using @docs/ai/clojure-library-source-and-documentation.md or web searches
 - The @src/demo directory contains code that is meant as a REPL playground. Use it to try out the library. Feel free to make changes there, add files, etc.
+
+## Future Work
+
+- Handle global side-effects that can affect test behaviors (e.g. alter-var-root)
+- Test and verify that integration test metadata works properly

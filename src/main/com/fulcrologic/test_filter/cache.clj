@@ -4,8 +4,10 @@
   Two-cache architecture:
   1. Analysis Cache (.test-filter-cache.edn) - Ephemeral snapshot of current state
   2. Success Cache (.test-filter-success.edn) - Persistent baseline of verified symbols"
-  (:require [clojure.edn :as edn]
-            [clojure.java.io :as io])
+  (:require
+    [clojure.edn :as edn]
+    [clojure.java.io :as io]
+    [taoensso.tufte :refer [p]])
   (:import (java.time Instant)))
 
 ;; -----------------------------------------------------------------------------
@@ -28,29 +30,35 @@
    :nodes {...}
    :edges [...]
    :files {\"src/foo.clj\" {:symbols [...]}}
-   :content-hashes {symbol -> SHA256-hex-string}}"
-  [symbol-graph content-hashes paths]
-  (let [cache-data {:analyzed-at    (str (Instant/now))
-                    :paths          paths
-                    :nodes          (:nodes symbol-graph)
-                    :edges          (:edges symbol-graph)
-                    :files          (:files symbol-graph)
-                    :content-hashes content-hashes}
-        cache-file (cache-path)]
-    (spit cache-file (pr-str cache-data))
-    cache-data))
+   :content-hashes {symbol -> SHA256-hex-string}
+   :reverse-index {symbol -> #{symbols-that-depend-on-it}} (optional)}"
+  ([symbol-graph content-hashes paths]
+   (save-graph! symbol-graph content-hashes paths nil))
+  ([symbol-graph content-hashes paths reverse-index]
+   (p `save-graph!
+     (let [cache-data (cond-> {:analyzed-at    (str (Instant/now))
+                               :paths          paths
+                               :nodes          (:nodes symbol-graph)
+                               :edges          (:edges symbol-graph)
+                               :files          (:files symbol-graph)
+                               :content-hashes content-hashes}
+                        reverse-index (assoc :reverse-index reverse-index))
+           cache-file (cache-path)]
+       (spit cache-file (pr-str cache-data))
+       cache-data))))
 
 (defn load-graph
   "Loads the analysis cache from disk.
   Returns nil if cache doesn't exist or is invalid."
   []
-  (let [cache-file (cache-path)]
-    (when (.exists (io/file cache-file))
-      (try
-        (edn/read-string (slurp cache-file))
-        (catch Exception e
-          (println "Warning: Failed to load analysis cache:" (.getMessage e))
-          nil)))))
+  (p `load-graph
+    (let [cache-file (cache-path)]
+      (when (.exists (io/file cache-file))
+        (try
+          (edn/read-string (slurp cache-file))
+          (catch Exception e
+            (println "Warning: Failed to load analysis cache:" (.getMessage e))
+            nil))))))
 
 (defn invalidate-cache!
   "Deletes the analysis cache file."
@@ -77,23 +85,25 @@
   Returns a map of symbol -> content-hash representing the last verified state.
   Returns empty map if cache doesn't exist."
   []
-  (let [cache-file (success-cache-path)]
-    (if (.exists (io/file cache-file))
-      (try
-        (edn/read-string (slurp cache-file))
-        (catch Exception e
-          (println "Warning: Failed to load success cache:" (.getMessage e))
-          {}))
-      {})))
+  (p `load-success-cache
+    (let [cache-file (success-cache-path)]
+      (if (.exists (io/file cache-file))
+        (try
+          (edn/read-string (slurp cache-file))
+          (catch Exception e
+            (println "Warning: Failed to load success cache:" (.getMessage e))
+            {}))
+        {}))))
 
 (defn save-success-cache!
   "Saves the success cache to disk.
 
   cache-data should be a map of symbol -> content-hash."
   [cache-data]
-  (let [cache-file (success-cache-path)]
-    (spit cache-file (pr-str cache-data))
-    cache-data))
+  (p `save-success-cache!
+    (let [cache-file (success-cache-path)]
+      (spit cache-file (pr-str cache-data))
+      cache-data)))
 
 (defn update-success-cache!
   "Updates the success cache by merging new verified hashes.

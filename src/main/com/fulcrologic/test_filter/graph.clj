@@ -1,9 +1,11 @@
 (ns com.fulcrologic.test-filter.graph
   "Graph operations for dependency analysis and test selection."
-  (:require [clojure.set :as set]
-            [clojure.string :as str]
-            [loom.alg :as alg]
-            [loom.graph :as lg]))
+  (:require
+    [clojure.set :as set]
+    [clojure.string :as str]
+    [loom.alg :as alg]
+    [loom.graph :as lg]
+    [taoensso.tufte :refer [p]]))
 
 ;; -----------------------------------------------------------------------------
 ;; Graph Construction
@@ -17,16 +19,17 @@
 
   We'll traverse backwards from tests to find dependencies."
   [{:keys [nodes edges]}]
-  (let [;; Create directed graph with all nodes
-        g            (apply lg/digraph (keys nodes))
-        ;; Add edges (from uses to)
-        g-with-edges (reduce (fn [g {:keys [from to]}]
-                               (if (and from to)
-                                 (lg/add-edges g [from to])
-                                 g))
-                       g
-                       edges)]
-    g-with-edges))
+  (p `build-dependency-graph
+    (let [;; Create directed graph with all nodes
+          g            (apply lg/digraph (keys nodes))
+          ;; Add edges (from uses to)
+          g-with-edges (reduce (fn [g {:keys [from to]}]
+                                 (if (and from to)
+                                   (lg/add-edges g [from to])
+                                   g))
+                         g
+                         edges)]
+      g-with-edges)))
 
 ;; -----------------------------------------------------------------------------
 ;; Dependency Walking
@@ -41,24 +44,59 @@
   Example: If test-foo uses handler, and handler uses db-query,
            returns #{handler db-query}"
   [graph symbol]
-  (when (lg/has-node? graph symbol)
-    ;; In loom, we need to get successors (outgoing edges) since we modeled
-    ;; as 'A uses B' means edge A -> B
-    (set (alg/bf-traverse graph symbol))))
+  (p `transitive-dependencies
+    (when (lg/has-node? graph symbol)
+      ;; In loom, we need to get successors (outgoing edges) since we modeled
+      ;; as 'A uses B' means edge A -> B
+      (set (alg/bf-traverse graph symbol)))))
 
 (defn symbols-with-dependents
   "Returns a map of symbol -> #{symbols-that-depend-on-it}.
 
-  This is useful for finding which tests are affected by a change."
+  This is useful for finding which tests are affected by a change.
+
+  OPTIMIZED: Uses topological sort and dynamic programming to compute
+  the reverse dependency index efficiently in O(V + E) time instead of
+  O(V * E) by calling transitive-dependencies once per node.
+
+  Algorithm:
+  1. Process nodes in REVERSE topological order (leaves first, roots last)
+  2. For each node, compute transitive deps from immediate successors
+  3. Build reverse map by recording each node as a dependent of its deps"
   [graph]
-  (reduce (fn [acc node]
-            (let [deps (transitive-dependencies graph node)]
-              (reduce (fn [m dep]
-                        (update m dep (fnil conj #{}) node))
-                acc
-                deps)))
-    {}
-    (lg/nodes graph)))
+  (p `symbols-with-dependents
+    (let [;; Get nodes in topological order then reverse it
+          ;; Process leaves (no dependencies) first, then work up to roots
+          ;; If there are cycles, topsort returns nil, so fall back to node list
+          topo-order     (or (alg/topsort graph) (lg/nodes graph))
+          reverse-order  (reverse topo-order)
+
+          ;; Phase 1: Build transitive dependency map using dynamic programming
+          ;; Process in reverse topo order so dependencies are computed before their dependents
+          transitive-map (p ::build-transitive-map
+                           (reduce
+                             (fn [trans-map node]
+                               (let [;; Get immediate successors (things this node directly uses)
+                                     successors (set (lg/successors graph node))
+                                     ;; Transitive deps = successors + their transitive deps (already computed)
+                                     trans-deps (into successors
+                                                  (mapcat #(get trans-map % #{}) successors))]
+                                 (assoc trans-map node trans-deps)))
+                             {}
+                             reverse-order))
+
+          ;; Phase 2: Invert the map to get reverse dependencies
+          ;; For each node and its transitive deps, record node as a dependent
+          reverse-map    (p ::build-reverse-map
+                           (reduce
+                             (fn [rev-map [node deps]]
+                               (reduce (fn [m dep]
+                                         (update m dep (fnil conj #{}) node))
+                                 rev-map
+                                 deps))
+                             {}
+                             transitive-map))]
+      reverse-map)))
 
 ;; -----------------------------------------------------------------------------
 ;; Test Selection
@@ -71,10 +109,13 @@
   Handles integration tests specially:
   - If a test has :test-targets metadata, only run if those targets changed
   - If a test is marked :integration? but has no targets, run conservatively (always)
-  - Otherwise, use transitive dependency analysis
+  - Otherwise, use transitive dependency analysis via reverse index
+
+  This function is optimized to use a reverse dependency index (symbol -> tests-that-depend-on-it)
+  which dramatically improves performance for large codebases.
 
   Args:
-    graph - loom directed graph of symbol dependencies
+    graph - loom directed graph of symbol dependencies (or map with :graph and :reverse-index)
     test-symbols - collection of test symbols or [symbol node-data] pairs
     changed-symbols - set of symbols that have changed
     symbol-graph - original symbol graph with node metadata
@@ -82,34 +123,67 @@
   Returns:
     Set of test symbols that need to run"
   [graph test-symbols changed-symbols symbol-graph]
-  (let [;; Normalize test-symbols to pairs if needed
-        test-pairs (if (and (seq test-symbols)
-                         (not (sequential? (first test-symbols))))
-                     (map (fn [sym] [sym (get-in symbol-graph [:nodes sym])]) test-symbols)
-                     test-symbols)
+  (p `find-affected-tests
+    (let [;; Support both raw graph and graph-with-index map
+          dep-graph         (if (map? graph)
+                              (or (:graph graph) graph)
+                              graph)
+          reverse-index     (when (map? graph) (:reverse-index graph))
 
-        ;; For each test, determine if it should run
-        affected   (for [[test-sym node] test-pairs
-                         :let [metadata     (:metadata node)
-                               test-targets (:test-targets metadata)
-                               integration? (:integration? metadata)]]
-                     (cond
-                       ;; If test has explicit targets, check if any changed
-                       test-targets
-                       (when (seq (set/intersection test-targets changed-symbols))
-                         test-sym)
+          ;; Normalize test-symbols to pairs if needed
+          test-pairs        (p ::test-pairs
+                              (if (and (seq test-symbols)
+                                    (not (sequential? (first test-symbols))))
+                                (vec
+                                  (pmap (fn [sym] [sym (get-in symbol-graph [:nodes sym])]) test-symbols))
+                                test-symbols))
 
-                       ;; If integration test without targets, run conservatively
-                       ;; (we can't determine dependencies accurately)
-                       integration?
-                       test-sym
+          ;; Separate tests by type for optimized handling. Use transients because could be large
+          [integration-tests targeted-tests regular-tests] (p ::test-by-type
+                                                             (mapv
+                                                               persistent!
+                                                               (reduce (fn [[int-tests tgt-tests reg-tests] [test-sym node]]
+                                                                         (let [metadata     (:metadata node)
+                                                                               test-targets (:test-targets metadata)
+                                                                               integration? (:integration? metadata)]
+                                                                           (cond
+                                                                             test-targets [int-tests (conj! tgt-tests [test-sym test-targets]) reg-tests]
+                                                                             integration? [(conj! int-tests test-sym) tgt-tests reg-tests]
+                                                                             :else [int-tests tgt-tests (conj! reg-tests test-sym)])))
+                                                                 [(transient #{}) (transient []) (transient #{})]
+                                                                 test-pairs)))
+          ;; Handle targeted tests
+          affected-targeted (p ::affected-targets
+                              (into #{}
+                                (comp
+                                  (filter (fn [[_test-sym targets]]
+                                            (seq (set/intersection targets changed-symbols))))
+                                  (map first))
+                                targeted-tests))
 
-                       ;; Otherwise, use transitive dependency analysis
-                       :else
-                       (let [deps (transitive-dependencies graph test-sym)]
-                         (when (seq (set/intersection deps changed-symbols))
-                           test-sym))))]
-    (set (filter some? affected))))
+          ;; Handle regular tests using reverse index if available
+          affected-regular  (if reverse-index
+                              ;; OPTIMIZED PATH: Use reverse index
+                              ;; For each changed symbol, find tests that depend on it
+                              (p ::reverse-index-affected
+                                (let [affected-by-changes (persistent!
+                                                            (reduce (fn [acc changed-sym] (reduce conj! acc (get reverse-index changed-sym #{})))
+                                                              (transient #{})
+                                                              changed-symbols))]
+                                  ;; Intersect with actual test symbols
+                                  (set/intersection affected-by-changes regular-tests)))
+
+                              ;; FALLBACK PATH: Use old algorithm if no index
+                              (p :fallback-affected
+                                (into #{}
+                                  (filter (fn [test-sym]
+                                            (let [deps (transitive-dependencies dep-graph test-sym)]
+                                              (seq (set/intersection deps changed-symbols)))))
+                                  regular-tests)))]
+
+      ;; Combine all affected tests
+      (p ::final-union
+        (set/union integration-tests affected-targeted affected-regular)))))
 
 ;; -----------------------------------------------------------------------------
 ;; Graph Utilities
@@ -140,17 +214,18 @@
   Example output:
     {'my.app-test/foo-test {'my.app/h [my.app-test/foo-test my.app/f my.app/g my.app/h]}}"
   [graph test-symbols changed-symbols]
-  (into {}
-    (for [test-sym test-symbols
-          :let [deps             (transitive-dependencies graph test-sym)
-                relevant-changes (set/intersection deps changed-symbols)]
-          :when (seq relevant-changes)]
-      [test-sym
-       (into {}
-         (for [changed-sym relevant-changes
-               :let [path (alg/bf-path graph test-sym changed-sym)]
-               :when path]
-           [changed-sym (vec path)]))])))
+  (p `trace-test-dependencies
+    (into {}
+      (for [test-sym test-symbols
+            :let [deps             (transitive-dependencies graph test-sym)
+                  relevant-changes (set/intersection deps changed-symbols)]
+            :when (seq relevant-changes)]
+        [test-sym
+         (into {}
+           (for [changed-sym relevant-changes
+                 :let [path (alg/bf-path graph test-sym changed-sym)]
+                 :when path]
+             [changed-sym (vec path)]))]))))
 
 (defn format-trace
   "Formats a trace map into a human-readable string.
@@ -167,22 +242,23 @@
   Returns:
     String representation of the trace"
   [trace-map & {:keys [style] :or {style :compact}}]
-  (let [lines (for [[test-sym changes] (sort-by (comp str first) trace-map)]
-                (if (= style :detailed)
-                  ;; Detailed: show each change on separate line with full path
-                  (str test-sym ":\n"
-                    (str/join "\n"
-                      (for [[changed-sym path] (sort-by (comp str first) changes)]
-                        (str "  " (str/join " -> " path) " (changed)"))))
-                  ;; Compact: show all changed symbols in a flat list
-                  (let [all-changes  (set (mapcat second changes))
-                        ;; Get unique symbols in paths (excluding the test itself)
-                        path-symbols (into (sorted-set)
-                                       (mapcat (fn [[_ path]]
-                                                 (rest path))
-                                         changes))]
-                    (str test-sym " " (vec path-symbols)))))]
-    (str/join "\n" lines)))
+  (p `format-trace
+    (let [lines (for [[test-sym changes] (sort-by (comp str first) trace-map)]
+                  (if (= style :detailed)
+                    ;; Detailed: show each change on separate line with full path
+                    (str test-sym ":\n"
+                      (str/join "\n"
+                        (for [[changed-sym path] (sort-by (comp str first) changes)]
+                          (str "  " (str/join " -> " path) " (changed)"))))
+                    ;; Compact: show all changed symbols in a flat list
+                    (let [all-changes  (set (mapcat second changes))
+                          ;; Get unique symbols in paths (excluding the test itself)
+                          path-symbols (into (sorted-set)
+                                         (mapcat (fn [[_ path]]
+                                                   (rest path))
+                                           changes))]
+                      (str test-sym " " (vec path-symbols)))))]
+      (str/join "\n" lines))))
 
 (comment
   ;; Example usage with analyzer:

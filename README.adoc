@@ -183,6 +183,24 @@ This command:
 * Should only be run after tests pass
 * Creates the baseline for future test selection
 
+==== Mark All Verified Command
+
+Initialize the success cache by marking all symbols in the current analysis as verified:
+
+[source,bash]
+----
+# Mark all symbols in the graph as verified
+clojure -M:cli mark-all-verified
+----
+
+This command:
+
+* Marks ALL symbols from the analysis cache as verified
+* Useful for initializing test-filter on an existing large codebase
+* Requires that you run `analyze` first
+* After this, only new changes will trigger tests
+* Creates the initial baseline without running any tests
+
 ==== Clear Command
 
 Invalidate the caches:
@@ -228,6 +246,11 @@ selection
 (tf/mark-verified! selection)  ; Mark all selected tests
 ;; or
 (tf/mark-verified! selection [my.app-test/foo-test])  ; Mark subset
+
+;; Alternative: Initialize on existing codebase (skip testing)
+(def graph (tf/analyze! :paths ["src/main" "src/test"]))
+(tf/mark-all-verified! graph)  ; Mark everything as verified
+;; => 141  (returns count of verified symbols)
 ----
 
 === Integration with Test Runners
@@ -251,6 +274,31 @@ TESTS=$(clojure -M:cli select -o namespaces)
 if [ -n "$TESTS" ]; then
   clojure -M:test -n $TESTS
 fi
+----
+
+=== Initializing on a Large Existing Codebase
+
+For large projects where you want to start using test-filter immediately:
+
+[source,bash]
+----
+# 1. Analyze the entire codebase
+clojure -M:cli analyze
+
+# 2. Mark everything as verified (creates initial baseline)
+clojure -M:cli mark-all-verified
+
+# 3. Now only new changes will trigger tests
+clojure -M:cli select -v
+# => No tests need to be run.
+
+# 4. Make a change to any file
+# ... edit file ...
+
+# 5. Analyze and select - only affected tests will run
+clojure -M:cli analyze
+clojure -M:cli select -v
+# => Only tests affected by your change
 ----
 
 === Typical Workflow

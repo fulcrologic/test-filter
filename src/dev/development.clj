@@ -2,13 +2,15 @@
   (:require
     [clj-reload.core :as reload]
     [com.fulcrologic.test-filter.core :as tf]
-    [kaocha.repl :as k]))
+    [kaocha.repl :as k]
+    [taoensso.tufte :as tufte :refer [profile]]))
 
 (defn run-tests!
   "Select and run affected tests using Kaocha."
   []
-  (let [{:keys [tests]} (tf/select-tests)]
-    (apply k/run tests)))
+  (profile {}
+    (let [{:keys [tests]} (tf/select-tests)]
+      (apply k/run tests))))
 
 (defn verify!
   "Mark the last selection as verified.
@@ -23,7 +25,9 @@
 
 (comment
   (reload/reload)
-  (k/run-all)
+  (tufte/add-basic-println-handler! {})
+  (profile {}
+    (k/run-all))
 
   ;; 1. Analyze codebase (creates/updates analysis cache)
   (def graph (tf/analyze! :paths ["src/demo"]))
