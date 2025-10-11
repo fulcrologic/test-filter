@@ -6,6 +6,7 @@
 == Overview
 
 image:https://img.shields.io/clojars/v/com.fulcrologic/test-filter.svg[link=https://clojars.org/com.fulcrologic/test-filter]
+image:https://circleci.com/gh/fulcrologic/test-filter/tree/main.svg?style=svg["CircleCI", link="https://circleci.com/gh/fulcrologic/test-filter/tree/main"]
 
 Test Filter is an intelligent test selection tool for Clojure projects that dramatically reduces test execution time by running only tests affected by your code changes. Instead of running your entire test suite on every change, Test Filter analyzes your source code dependencies and git history to determine the minimum set of tests that need to run.
 
@@ -348,7 +349,7 @@ TESTS=$(clojure -M:cli select -o namespaces)
 if [ -n "$TESTS" ]; then
   echo "Running affected tests: $TESTS"
   clojure -M:kaocha --focus $TESTS
-  
+
   # If tests pass, update success cache
   if [ $? -eq 0 ]; then
     clojure -M:cli mark-verified
