@@ -1,3 +1,18 @@
+<style>
+section {
+  font-size: 26px;
+}
+h1 {
+  font-size: 2em;
+}
+h2 {
+  font-size: 1.6em;
+}
+pre {
+  font-size: 0.8em;
+}
+</style>
+
 # Test Filter
 
 ## Intelligent Test Selection for Clojure

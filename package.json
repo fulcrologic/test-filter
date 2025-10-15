@@ -1,0 +1,21 @@
+{
+  "name": "test-filter",
+  "version": "1.0.0",
+  "description": "= Test Filter: Intelligent Test Selection for Clojure :toc: :toclevels: 3 :icons: font",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build:slides": "marp presentation.md --html -o presentation.html",
+    "build:pdf": "marp presentation.md --html --pdf --allow-local-files -o presentation.pdf",
+    "build:pptx": "marp presentation.md --html -o presentation.pptx"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@marp-team/marp-cli": "^4.2.3"
+  }
+}
