@@ -388,10 +388,19 @@ Detected test frameworks:
 
 === Integration Test Handling
 
-Integration tests often have broad dependencies. Test Filter detects them by namespace pattern (`*.integration.*`) and applies special handling:
+Integration tests often have broad dependencies that are difficult to track with static analysis.
+Test Filter provides flexible options for handling them.
+
+==== Detection Methods
+
+Test Filter identifies integration tests in two ways:
+
+1. **Namespace Pattern**: Any test in a namespace containing `.integration.` as a segment
+2. **Explicit Metadata**: Tests marked with `:integration true` metadata
 
 [source,clojure]
 ----
+;; Method 1: Namespace pattern (automatic detection)
 (ns my-app.integration.api-test
   (:require [clojure.test :refer [deftest is]]
             [my-app.system :as system]))
@@ -400,13 +409,192 @@ Integration tests often have broad dependencies. Test Filter detects them by nam
   (let [sys (system/start)]
     ;; Integration test
     (is (= 200 (:status (api-call sys))))))
+
+;; Method 2: Explicit metadata (any namespace)
+(deftest ^{:integration true} test-full-workflow
+  (let [sys (system/start)]
+    ;; Integration test in a regular namespace
+    (is (= :success (run-full-workflow sys)))))
 ----
 
-Options for integration tests:
+==== Behavior Modes
 
-1. **Conservative mode** (default): Run integration tests when uncertain about dependencies
-2. **Metadata targeting**: Specify exact dependencies with `:test-targets` metadata
-3. **Configuration file**: External configuration for complex cases
+Integration tests behave differently based on their metadata:
+
+1. **Conservative Mode** (default): Run the test whenever uncertain about dependencies
+- Used when test is marked as integration but has no `:test-targets`
+- Safest option: ensures integration tests run when needed
+- May run more often than strictly necessary
+
+2. **Targeted Mode**: Run only when specific symbols change
+- Used when test has `:test-targets` metadata
+- Precise control over when integration tests run
+- Reduces unnecessary test execution
+
+==== Using `:test-targets` Metadata
+
+The `:test-targets` (or singular `:test-target`) metadata allows you to specify exactly which symbols an integration test depends on.
+The test will only run if one of those target symbols changes.
+
+**IMPORTANT**: The `:test-targets` metadata works **independently** of actual function calls in your test code.
+You don't need to call the target functions for the metadata to work - Test Filter uses the metadata alone to determine dependencies.
+This is powerful for integration tests where dependencies might be:
+
+* Dynamic or indirect (loaded at runtime)
+* Hidden behind macros or protocols
+* External system interactions (databases, APIs)
+* Not statically analyzable by clj-kondo
+
+Example: A test can have `{:test-targets my.app/process-payment}` without ever calling `process-payment` directly, and it will still run when `process-payment` changes.
+
+===== Supported Formats
+
+The metadata accepts multiple formats:
+
+[source,clojure]
+----
+;; Single symbol (fully-qualified)
+(deftest ^{:test-target my.app/process-order} test-order-processing
+  (is (= :processed (:status (process-order {:id 123})))))
+
+;; Single symbol (syntax-quoted with alias)
+(ns my-app.integration.orders-test
+  (:require [my.app :as app]))
+
+(deftest ^{:test-targets `app/process-order} test-order-processing
+  (is (= :processed (:status (app/process-order {:id 123})))))
+
+;; Multiple symbols as a set
+(deftest ^{:test-targets #{my.app/send-notification
+                           my.app/handle-refund}}
+  test-notification-and-refund
+  (is (= :sent (send-notification "customer-1" "message")))
+  (is (= :refunded (handle-refund 456 25.50))))
+
+;; Multiple symbols as a vector (normalized to set)
+(deftest ^{:test-targets [my.app/foo my.app/bar]} test-both
+  (is (= :ok (foo)))
+  (is (= :ok (bar))))
+----
+
+===== With fulcro-spec
+
+The `specification` macro also accepts metadata:
+
+[source,clojure]
+----
+(ns my-app.integration.payment-test
+  (:require [my.app :as app]
+            [fulcro-spec.core :refer [specification assertions]]))
+
+;; Single target
+(specification {:test-targets `app/validate-payment}
+  "Payment Validation"
+  (assertions
+    "validates valid payment"
+    (app/validate-payment {:card "1234" :amount 50}) => true))
+
+;; Multiple targets
+(specification {:test-targets #{my.app/process-order
+                                my.app/send-confirmation}}
+  "Order Processing Flow"
+  (assertions
+    "processes and confirms"
+    (app/process-order {:id 123}) => {:status :processed}
+    (app/send-confirmation 123) => {:sent true}))
+
+;; Singular form also works
+(specification {:test-target my.app/validate-payment}
+  "Payment Validation - Singular"
+  (assertions
+    (app/validate-payment {:card "1234" :amount 50}) => true))
+----
+
+===== Combining with `:integration`
+
+You can combine both metadata fields:
+
+[source,clojure]
+----
+;; Explicit integration marker + specific targets
+(deftest ^{:integration true
+           :test-targets #{my.app/critical-fn}}
+  test-critical-integration
+  (is (= :success (critical-fn))))
+----
+
+==== Decision Tree
+
+Test Filter uses this logic to determine when integration tests run:
+
+1. **Has `:test-targets` metadata?**
+- YES → Run only if one of the target symbols changed
+- NO → Continue to step 2
+
+2. **Is marked `:integration?` or in `*.integration.*` namespace?**
+- YES → Run conservatively (always run when any code changes)
+- NO → Use normal transitive dependency analysis
+
+==== Examples
+
+[source,clojure]
+----
+;; Example 1: Metadata-only targeting (no function calls required)
+(ns my-app.integration.payment-test
+  (:require [clojure.test :refer [deftest is]]
+            [my-app.payment :as payment]))
+
+(deftest ^{:test-targets #{my.app.payment/process-payment
+                           my.app.payment/validate-card}}
+  test-payment-flow-end-to-end
+  ;; This test doesn't directly call process-payment or validate-card
+  ;; They're called indirectly through the full system
+  ;; But it will run when either of them changes
+  (is (= :success (start-system-and-test-payment))))
+
+;; Example 2: Conservative integration test (always runs)
+(ns my-app.integration.full-system-test
+  (:require [clojure.test :refer [deftest is]]))
+
+(deftest test-entire-system
+  ;; No :test-targets specified
+  ;; Runs whenever ANY change is detected
+  (is (= :success (start-and-test-full-system))))
+
+;; Example 3: Targeted integration test (runs only when order functions change)
+(ns my-app.integration.orders-test
+  (:require [clojure.test :refer [deftest is]]
+            [my.app.orders :as orders]))
+
+(deftest ^{:test-targets #{my.app.orders/create-order
+                           my.app.orders/validate-order}}
+  test-order-workflow
+  ;; Only runs if create-order or validate-order changed
+  (is (= :valid (orders/validate-order {:id 1})))
+  (is (= :created (orders/create-order {:id 1}))))
+
+;; Example 4: Mix of conservative and targeted
+(ns my-app.integration.mixed-test
+  (:require [clojure.test :refer [deftest is]]
+            [my.app.core :as core]))
+
+;; This one always runs (conservative)
+(deftest test-critical-path
+  (is (= :ok (core/critical-operation))))
+
+;; This one only runs when payment-fn changes
+(deftest ^{:test-targets my.app.payment/process-payment}
+  test-payment-integration
+  (is (= :processed (core/process-payment {:amount 100}))))
+----
+
+==== Best Practices
+
+1. **Start Conservative**: Use namespace pattern or `:integration` metadata initially
+2. **Add Targets Gradually**: As you understand dependencies, add `:test-targets` to reduce test time
+3. **Be Explicit**: Prefer fully-qualified symbols in `:test-targets` for clarity
+4. **Document Intent**: Use comments to explain why specific targets were chosen
+5. **Regular Review**: Periodically verify that targeted tests still cover the right dependencies
 
 === CLJC File Support
 

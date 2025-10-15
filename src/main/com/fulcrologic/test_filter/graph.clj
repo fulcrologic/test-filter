@@ -170,9 +170,14 @@
                                 (let [affected-by-changes (persistent!
                                                             (reduce (fn [acc changed-sym] (reduce conj! acc (get reverse-index changed-sym #{})))
                                                               (transient #{})
-                                                              changed-symbols))]
-                                  ;; Intersect with actual test symbols
-                                  (set/intersection affected-by-changes regular-tests)))
+                                                              changed-symbols))
+                                      changed-tests       (set/intersection changed-symbols regular-tests)]
+                                  ;; Union of tests affected by changes and tests that changed themselves
+                                  (set/union
+                                    ;; Tests that depend on changed symbols
+                                    (set/intersection affected-by-changes regular-tests)
+                                    ;; Tests that changed themselves
+                                    changed-tests)))
 
                               ;; FALLBACK PATH: Use old algorithm if no index
                               (p :fallback-affected

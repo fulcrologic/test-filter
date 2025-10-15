@@ -210,6 +210,34 @@
             (contains? affected 'app.core-test/handler-test) => true
             (contains? affected 'app.db-test/query-test) => true))))
 
+    (behavior "selects a test when only the test itself changes"
+      (component "using fallback path (no reverse index)"
+        (let [affected (graph/find-affected-tests
+                         graph
+                         test-symbols
+                         #{'app.core-test/handler-test}
+                         sample-symbol-graph)]
+
+          (assertions
+            "includes the changed test"
+            (contains? affected 'app.core-test/handler-test) => true)))
+
+      (component "using optimized path (with reverse index)"
+        (let [reverse-index    (graph/symbols-with-dependents graph)
+              graph-with-index {:graph graph :reverse-index reverse-index}
+              affected         (graph/find-affected-tests
+                                 graph-with-index
+                                 test-symbols
+                                 #{'app.core-test/handler-test}
+                                 sample-symbol-graph)]
+
+          (assertions
+            "includes the changed test"
+            (contains? affected 'app.core-test/handler-test) => true
+
+            "does not select other tests"
+            (contains? affected 'app.db-test/query-test) => false))))
+
     (behavior "handles integration tests with explicit targets"
       (let [int-graph (graph/build-dependency-graph integration-test-graph)
             int-tests [['app.test/targeted-test

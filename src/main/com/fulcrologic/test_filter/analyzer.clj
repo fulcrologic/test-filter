@@ -3,6 +3,8 @@
   (:require
     [clj-kondo.core :as clj-kondo]
     [clojure.string :as str]
+    [clojure.tools.reader :as reader]
+    [clojure.tools.reader.reader-types :as reader-types]
     [taoensso.tufte :refer [p]]))
 
 (def default-test-macros
@@ -65,6 +67,127 @@
       targets (assoc :test-targets targets)
       integration? (assoc :integration? true))))
 
+(defn- build-alias-map
+  "Builds a map of alias -> fully-qualified namespace for a given file.
+
+  Args:
+    analysis - clj-kondo analysis result
+    filepath - Path to the file to build alias map for
+
+  Returns:
+    Map of alias symbol -> fully-qualified namespace symbol
+    e.g. {'demo 'com.fulcrologic.test-filter.integration-demo}"
+  [analysis filepath]
+  (let [ns-usages   (get-in analysis [:analysis :namespace-usages])
+        file-usages (filter #(= (:filename %) filepath) ns-usages)]
+    (into {}
+      (keep (fn [{:keys [alias to]}]
+              (when alias
+                [alias to])))
+      file-usages)))
+
+(defn- resolve-aliased-symbol
+  "Resolves an aliased symbol to its fully-qualified form.
+
+  Args:
+    sym - A symbol that might be aliased (e.g. demo/validate-payment)
+    alias-map - Map of alias -> fully-qualified namespace
+
+  Returns:
+    Fully-qualified symbol if alias found, otherwise original symbol"
+  [sym alias-map]
+  (if-let [ns-part (namespace sym)]
+    (let [alias-sym (symbol ns-part)
+          name-part (name sym)]
+      (if-let [full-ns (get alias-map alias-sym)]
+        (symbol (str full-ns) name-part)
+        sym))
+    sym))
+
+(defn- parse-specification-forms
+  "Parses specification forms from source and extracts metadata.
+
+  Args:
+    source - Source code string
+    ns-sym - Namespace symbol
+    alias-map - Map of alias -> fully-qualified namespace (for resolving aliased symbols)
+
+  Returns a vector of maps with:
+    :line - Line number where specification starts
+    :test-name - The test name string
+    :metadata - Metadata map (may contain :test-targets with resolved symbols)"
+  [source ns-sym alias-map]
+  (try
+    (let [rdr   (reader-types/indexing-push-back-reader source)
+          forms (atom [])]
+      (loop []
+        (when-let [form (try (reader/read {:eof nil} rdr)
+                             (catch Exception _ nil))]
+          (when (and (list? form)
+                  (= 'specification (first form)))
+            (let [args             (rest form)
+                  ;; Check if first arg is a map (metadata)
+                  [metadata-map remaining-args] (if (map? (first args))
+                                                  [(first args) (rest args)]
+                                                  [nil args])
+                  ;; Next should be the string name
+                  test-name        (when (string? (first remaining-args))
+                                     (first remaining-args))
+                  line             (reader-types/get-line-number rdr)
+                  ;; Extract and normalize test-targets
+                  test-targets     (when metadata-map
+                                     (or (:test-targets metadata-map)
+                                       (:test-target metadata-map)))
+                  ;; Helper to unwrap quoted forms like (quote demo/validate-payment)
+                  unwrap-quote     (fn [x]
+                                     (if (and (list? x)
+                                           (= 'quote (first x))
+                                           (symbol? (second x)))
+                                       (second x)
+                                       x))
+                  ;; Helper to resolve aliased symbols
+                  resolve-sym      (fn [sym]
+                                     (let [unwrapped (unwrap-quote sym)]
+                                       (if (symbol? unwrapped)
+                                         (resolve-aliased-symbol unwrapped alias-map)
+                                         unwrapped)))
+                  ;; Normalize test-targets to a set of symbols
+                  resolved-targets (when test-targets
+                                     (cond
+                                       ;; Single symbol (might be quoted or aliased)
+                                       (symbol? test-targets)
+                                       #{(resolve-sym test-targets)}
+
+                                       ;; Quoted form like (quote demo/validate-payment)
+                                       (and (list? test-targets)
+                                         (= 'quote (first test-targets)))
+                                       #{(resolve-sym test-targets)}
+
+                                       ;; Set of symbols (unwrap quotes and resolve aliases)
+                                       (set? test-targets)
+                                       (into #{}
+                                         (map resolve-sym)
+                                         test-targets)
+
+                                       ;; Sequential (unwrap quotes and resolve aliases)
+                                       (sequential? test-targets)
+                                       (into #{}
+                                         (map resolve-sym)
+                                         test-targets)
+
+                                       :else nil))
+                  final-metadata   (cond-> {}
+                                     resolved-targets (assoc :test-targets resolved-targets))]
+              (when test-name
+                (swap! forms conj {:line      line
+                                   :test-name test-name
+                                   :metadata  final-metadata}))))
+          (recur)))
+      @forms)
+    (catch Exception e
+      ;; If parsing fails, return empty vector
+      [])))
+
 (defn- parse-macro-test-files
   "Parses files containing macro test calls and extracts test information.
 
@@ -98,19 +221,12 @@
                 (fn [[filepath calls]]
                   (try
                     (let [source       (slurp filepath)
-                          ;; Match (specification "name" ...) with optional metadata/keywords
-                          ;; Pattern handles: (specification "name"), (specification "name" :key),
-                          ;;                  (specification {:meta} "name"), etc.
-                          spec-pattern #"\(specification\s+.*?\"([^\"]+)\""
-                          lines        (str/split-lines source)
-                          ;; Find specification lines and their test names
-                          specs        (keep-indexed
-                                         (fn [idx line]
-                                           (when-let [match (re-find spec-pattern line)]
-                                             {:line      (inc idx)
-                                              :test-name (second match)}))
-                                         lines)
+                          ;; Use the new parser to extract specification forms with metadata
                           ns-sym       (:from (first calls))
+                          ;; Build alias map for this file
+                          alias-map    (build-alias-map analysis filepath)
+                          ;; Parse with alias resolution
+                          specs        (parse-specification-forms source ns-sym alias-map)
                           ;; Filter out :refer usages (single line, row=end-row) and :cljs language
                           actual-calls (filterv (fn [call]
                                                   (and (not= (:row call) (:end-row call))
@@ -147,11 +263,16 @@
          :macro-test-nodes
          (vec
            (for [[filepath {:keys [specs ns-sym]}] parsed-files
-                 {:keys [line test-name]} specs]
-             (let [var-name (symbol (str "__"
-                                      (str/replace test-name #"[^\w\d\-\!\#\$\%\&\*\_\<\>\?\|]" "-")
-                                      "__"))
-                   test-sym (symbol (str ns-sym) (str var-name))]
+                 {:keys [line test-name metadata]} specs]
+             (let [var-name      (symbol (str "__"
+                                           (str/replace test-name #"[^\w\d\-\!\#\$\%\&\*\_\<\>\?\|]" "-")
+                                           "__"))
+                   test-sym      (symbol (str ns-sym) (str var-name))
+                   ;; Merge the extracted metadata with base test metadata
+                   full-metadata (merge {:test       true
+                                         :macro-test true
+                                         :test-name  test-name}
+                                   metadata)]
                [test-sym
                 {:symbol     test-sym
                  :type       :test
@@ -159,9 +280,7 @@
                  :line       line
                  :end-line   line
                  :defined-by 'fulcro-spec.core/specification
-                 :metadata   {:test       true
-                              :macro-test true
-                              :test-name  test-name}}])))}))))
+                 :metadata   full-metadata}])))}))))
 
 ;; Forward declarations
 (declare find-macro-tests)

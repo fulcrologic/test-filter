@@ -65,7 +65,17 @@ For the fastest iteration during development, use `patch-graph-with-local-change
 (def graph (tf/analyze! :paths ["src/main" "src/demo" "src/test"]))
 
 ;; 2. Fast iteration loop - edit code, save, then:
+
+;; Option A: Only uncommitted files (default)
 (def selection (tf/select-tests :graph (tf/patch-graph-with-local-changes graph)))
+
+;; Option B: All changes since branching from main (feature branch workflow)
+(def selection (tf/select-tests :graph (tf/patch-graph-with-local-changes graph :base-branch "main")))
+
+;; Option C: Use BASE_BRANCH environment variable
+;; export BASE_BRANCH=main
+(def selection (tf/select-tests :graph (tf/patch-graph-with-local-changes graph)))
+
 (apply k/run (:tests selection))
 
 ;; 3. Mark as verified after tests pass
@@ -75,7 +85,10 @@ For the fastest iteration during development, use `patch-graph-with-local-change
 ```
 
 **How it works:**
-- `patch-graph-with-local-changes` detects uncommitted files via git
+
+- `patch-graph-with-local-changes` detects changed files via git
+- Default: only uncommitted files are considered
+- With `:base-branch`: includes all changes since branching (merge-base) + uncommitted files
 - Re-computes hashes only for symbols in changed files (fast!)
 - Merges fresh hashes into the graph
 - No I/O - graph passed directly to `select-tests`
@@ -147,14 +160,22 @@ selection
    - Public API:
      - `analyze!` - Full analysis with clj-kondo (returns graph)
      - `patch-graph-with-local-changes` - Fast hash updates for git-changed files
+         - Supports `:base-branch` parameter to include all changes since branching
+         - Defaults to BASE_BRANCH environment variable if not specified
+         - Falls back to uncommitted files only if no base branch
      - `select-tests` - Test selection (accepts optional `:graph` parameter)
      - `mark-verified!` - Update success cache after tests pass
    - Compares current hashes vs success cache to detect changes
 
 6. **Git** (`com.fulcrologic.test-filter.git`)
-   - Detects uncommitted file changes for fast iteration
+    - Detects file changes for fast iteration
    - Used by `patch-graph-with-local-changes` to identify files needing re-hash
-   - Functions: `uncommitted-files`, `changed-files`, `has-uncommitted-changes?`
+    - Functions:
+        - `uncommitted-files` - Files with uncommitted changes
+        - `changed-files` - Files changed between two revisions
+        - `merge-base` - Find common ancestor between branches
+        - `changed-files-from-base` - All changes since branching from base (merge-base + uncommitted)
+        - `has-uncommitted-changes?` - Check if there are uncommitted changes
 
 7. **CLI** (`com.fulcrologic.test-filter.cli`)
    - Commands: analyze, select, mark-verified, status, clear

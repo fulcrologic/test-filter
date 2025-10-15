@@ -9,7 +9,7 @@
            com.taoensso/tufte       {:mvn/version "2.6.3"}}
 
  :aliases {:test {:extra-paths ["src/test" "src/demo"]
-                  :extra-deps  {fulcrologic/fulcro-spec {:mvn/version "3.1.12"}
+                  :extra-deps  {fulcrologic/fulcro-spec {:mvn/version "3.1.14"}
                                 lambdaisland/kaocha     {:mvn/version "1.91.1392"}
                                 clj-kondo/clj-kondo     {:mvn/version "2025.07.28"}}}
 
