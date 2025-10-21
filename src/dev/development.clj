@@ -26,7 +26,7 @@
 (comment
   (reload/reload)
   (tufte/add-basic-println-handler! {})
-  (profile
+  (profile {}
     (k/run-all))
 
   ;; 1. Analyze codebase (creates/updates analysis cache)

@@ -527,7 +527,7 @@ You can combine both metadata fields:
 
 Test Filter uses this logic to determine when integration tests run:
 
-1. **Has `:test-targets` metadata?**
+1. **Has `:test-targets` or `:test-target` metadata?**
 - YES → Run only if one of the target symbols changed
 - NO → Continue to step 2
 
