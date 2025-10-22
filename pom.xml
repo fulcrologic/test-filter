@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.fulcrologic</groupId>
     <artifactId>test-filter</artifactId>
@@ -75,12 +76,17 @@
         <dependency>
             <groupId>org.clojure</groupId>
             <artifactId>clojure</artifactId>
-            <version>1.12.2</version>
+            <version>1.12.3</version>
         </dependency>
         <dependency>
             <groupId>org.clojure</groupId>
             <artifactId>tools.cli</artifactId>
             <version>1.1.230</version>
+        </dependency>
+        <dependency>
+            <groupId>com.taoensso</groupId>
+            <artifactId>tufte</artifactId>
+            <version>2.6.3</version>
         </dependency>
         <dependency>
             <groupId>aysylu</groupId>
@@ -90,7 +96,7 @@
         <dependency>
             <groupId>clj-kondo</groupId>
             <artifactId>clj-kondo</artifactId>
-            <version>2025.07.28</version>
+            <version>2025.09.22</version>
         </dependency>
         <dependency>
             <groupId>org.clojure</groupId>
