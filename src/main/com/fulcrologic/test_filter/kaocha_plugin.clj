@@ -22,9 +22,9 @@
     Add :com.fulcrologic.test-filter/kaocha-plugin to your tests.edn plugins list
     Set TEST_FILTER_MODE environment variable as needed"
   (:require
-    [com.fulcrologic.test-filter.cache :as cache]
-    [com.fulcrologic.test-filter.core :as tf]
-    [kaocha.plugin :refer [defplugin]]))
+   [com.fulcrologic.test-filter.cache :as cache]
+   [com.fulcrologic.test-filter.core :as tf]
+   [kaocha.plugin :refer [defplugin]]))
 
 (defn- get-filter-mode
   "Get the test filter mode from TEST_FILTER_MODE environment variable.
@@ -39,9 +39,11 @@
     "filter" :filter
     :noop))
 
-;; Atom to store selection data between pre-test and post-run
-;; (since kaocha doesn't preserve custom metadata from testable to test-result)
-(defonce ^:private selection-state (atom nil))
+;; Atom to store selection data and track if we've already processed
+;; Multiple test suites in tests.edn would cause pre-test to run multiple times
+;; We only want to do selection once per test run
+(defonce ^:private plugin-state (atom {:selection nil
+                                       :processed? false}))
 
 (defn- get-test-var-symbol
   "Extract the fully-qualified test var symbol from a kaocha test map.
@@ -64,15 +66,16 @@
     selected-test-symbols - Set of test var symbols that should run
 
   Returns:
-    Filtered test suite with only selected tests"
+    Filtered test suite with only selected tests (always returns a valid testable)"
   [test-suite selected-test-symbols]
-  (let [selected-set (set selected-test-symbols)]
+  ;; Convert symbols to keywords since kaocha uses keywords for :kaocha.testable/id
+  (let [selected-set (set (map (comp keyword str) selected-test-symbols))]
     (letfn [(filter-testable [testable]
-              (let [test-var-sym (get-test-var-symbol testable)]
+              (let [test-var-id (get-test-var-symbol testable)]
                 (cond
                   ;; This is a test var - keep only if selected
-                  test-var-sym
-                  (when (contains? selected-set test-var-sym)
+                  test-var-id
+                  (when (contains? selected-set test-var-id)
                     testable)
 
                   ;; This is a container (ns, suite, etc) - recursively filter children
@@ -85,154 +88,170 @@
                   :else
                   testable)))]
 
-      (filter-testable test-suite))))
+      ;; Always return a valid testable at the top level
+      (or (filter-testable test-suite)
+          (assoc test-suite :kaocha.test-plan/tests [])))))
 
 (defplugin com.fulcrologic.test-filter/kaocha-plugin
   (pre-test [testable test-plan]
-    ;; Only process the top-level test suite, not individual tests/namespaces
-    ;; The top-level suite has type :kaocha.type/clojure.test
-    (if-not (= :kaocha.type/clojure.test (:kaocha.testable/type testable))
-      testable                                              ; Pass through non-suite testables unchanged
+    ;; Only process test suites (type :kaocha.type/clojure.test)
+            (if-not (= :kaocha.type/clojure.test (:kaocha.testable/type testable))
+              testable ; Pass through non-suite testables unchanged
 
-      (let [mode (get-filter-mode)]
-        (case mode
+              (let [mode (get-filter-mode)]
+                (case mode
           ;; No-op mode - pass through silently
-          :noop
-          testable
+                  :noop
+                  testable
 
-          ;; Bootstrap mode - no filtering, just log
-          :bootstrap
-          (do
-            (println "\n=== Test-Filter: Bootstrap Mode ===")
-            (println "Running all tests to establish baseline cache")
-            (println "Will mark all symbols as verified after successful run\n")
-            (flush)
-            testable)
+          ;; Bootstrap mode - no filtering, just log once
+                  :bootstrap
+                  (do
+                    (when-not (:processed? @plugin-state)
+                      (println "\n=== Test-Filter: Bootstrap Mode ===")
+                      (println "Running all tests to establish baseline cache")
+                      (println "Will mark all symbols as verified after successful run\n")
+                      (flush)
+                      (swap! plugin-state assoc :processed? true))
+                    testable)
 
-          ;; Filter mode - select and filter tests
-          :filter
-          (try
-            (println "\n=== Test-Filter: Selective Testing Mode ===")
-            (flush)
+          ;; Filter mode - select once, then filter each suite
+                  :filter
+                  (try
+            ;; Only run selection once for all suites
+                    (when-not (:processed? @plugin-state)
+                      (println "\n=== Test-Filter: Selective Testing Mode ===")
+                      (flush)
 
-            ;; Check if caches exist
-            (let [cache-path   (cache/cache-path)
-                  success-path (cache/success-cache-path)]
+              ;; Check if caches exist
+                      (let [cache-path (cache/cache-path)
+                            success-path (cache/success-cache-path)]
 
-              (when-not (.exists (java.io.File. cache-path))
-                (throw (ex-info "Analysis cache not found. Run test-filter analyze first."
-                         {:cache-path cache-path})))
+                        (when-not (.exists (java.io.File. cache-path))
+                          (throw (ex-info "Analysis cache not found. Run test-filter analyze first."
+                                          {:cache-path cache-path})))
 
-              (when-not (.exists (java.io.File. success-path))
-                (println "WARNING: Success cache not found at" success-path)
-                (println "Set TEST_FILTER_MODE=bootstrap to create initial cache")
-                (flush)
-                (throw (ex-info "Success cache not found. Set TEST_FILTER_MODE=bootstrap to bootstrap."
-                         {:success-path success-path}))))
+                        (when-not (.exists (java.io.File. success-path))
+                          (println "WARNING: Success cache not found at" success-path)
+                          (println "Set TEST_FILTER_MODE=bootstrap to create initial cache")
+                          (flush)
+                          (throw (ex-info "Success cache not found. Set TEST_FILTER_MODE=bootstrap to bootstrap."
+                                          {:success-path success-path}))))
 
-            ;; Select tests using test-filter
-            (let [selection      (tf/select-tests :verbose true)
-                  selected-tests (:tests selection)
-                  stats          (:stats selection)]
+              ;; Select tests using test-filter
+                      (let [selection (tf/select-tests :verbose true)
+                            selected-tests (:tests selection)
+                            stats (:stats selection)]
 
-              ;; Store selection for post-run hook
-              (reset! selection-state selection)
+                ;; Store selection for filtering and post-run hook
+                        (swap! plugin-state assoc
+                               :selection selection
+                               :processed? true)
 
-              (println "\n=== Test Selection Results ===")
-              (println "Total tests:" (:total-tests stats))
-              (println "Selected tests:" (:selected-tests stats))
-              (println "Changed symbols:" (:changed-symbols stats))
-              (println "Selection rate:" (:selection-rate stats))
-              (println "Reason:" (:selection-reason stats "changes detected"))
-              (flush)
+                        (println "\n=== Test Selection Results ===")
+                        (println "Total tests:" (:total-tests stats))
+                        (println "Selected tests:" (:selected-tests stats))
+                        (println "Changed symbols:" (:changed-symbols stats))
+                        (println "Selection rate:" (:selection-rate stats))
+                        (println "Reason:" (:selection-reason stats "changes detected"))
+                        (flush)))
 
-              (if (empty? selected-tests)
-                (do
-                  (println "\nNo tests need to run - no changes detected!")
-                  (flush)
+            ;; Filter this suite using the cached selection
+                    (let [selection (:selection @plugin-state)
+                          selected-tests (:tests selection)]
+
+                      (if (empty? selected-tests)
+                        (do
+                          (when-not (:processed? @plugin-state)
+                            (println "\nNo tests need to run - no changes detected!")
+                            (flush))
                   ;; Return testable with no tests
-                  (assoc testable :kaocha.test-plan/tests []))
+                          (assoc testable :kaocha.test-plan/tests []))
 
-                (do
-                  (println "\nFiltering test suite to run selected tests...\n")
-                  (flush)
+                        (do
                   ;; Filter the testable to only include selected tests
-                  (filter-tests-by-selection testable (set selected-tests)))))
+                          (filter-tests-by-selection testable (set selected-tests)))))
 
-            (catch Exception e
-              (println "\n=== Test-Filter Error ===")
-              (println "Failed to select tests:" (.getMessage e))
-              (println "Falling back to running all tests\n")
-              (flush)
+                    (catch Exception e
+                      (when-not (:processed? @plugin-state)
+                        (println "\n=== Test-Filter Error ===")
+                        (println "Failed to select tests:" (.getMessage e))
+                        (println "Falling back to running all tests\n")
+                        (flush)
+                ;; Mark as processed even on error to prevent repeated error messages
+                        (swap! plugin-state assoc :processed? true))
               ;; Clear selection state on error
-              (reset! selection-state nil)
+                      (swap! plugin-state assoc :selection nil)
               ;; On error, fall back to running all tests
-              testable))))))
+                      testable))))))
 
   (post-run [test-result]
-    (let [mode      (get-filter-mode)                       ; Read mode from environment variable
-          all-pass? (zero? (+ (:kaocha.result/fail test-result 0)
-                             (:kaocha.result/error test-result 0)))]
+            (let [mode (get-filter-mode) ; Read mode from environment variable
+                  all-pass? (zero? (+ (:kaocha.result/fail test-result 0)
+                                      (:kaocha.result/error test-result 0)))]
 
-      (cond
+      ;; Reset processed flag for next run
+              (swap! plugin-state assoc :processed? false)
+
+              (cond
         ;; No-op mode - pass through silently
-        (= mode :noop)
-        test-result
+                (= mode :noop)
+                test-result
 
         ;; Tests failed - don't update cache
-        (not all-pass?)
-        (do
-          (println "\n=== Test-Filter: Tests Failed ===")
-          (println "Success cache NOT updated (tests must pass to verify changes)")
-          (flush)
-          test-result)
+                (not all-pass?)
+                (do
+                  (println "\n=== Test-Filter: Tests Failed ===")
+                  (println "Success cache NOT updated (tests must pass to verify changes)")
+                  (flush)
+                  test-result)
 
         ;; Bootstrap mode - mark all verified
-        (= mode :bootstrap)
-        (do
-          (println "\n=== Test-Filter: Bootstrap Complete ===")
-          (println "All tests passed! Marking all symbols as verified...")
-          (flush)
-          (try
-            ;; Analyze and build graph on-the-fly
-            (let [graph (tf/analyze! :paths ["src"])]
-              (if graph
-                (let [verified-count (tf/mark-all-verified! graph)]
-                  (println "Marked" verified-count "symbols as verified")
-                  (println "Success cache saved to:" (cache/success-cache-path))
-                  (println "Future test runs will only execute affected tests")
-                  (flush))
+                (= mode :bootstrap)
                 (do
-                  (println "WARNING: Could not analyze codebase to mark symbols as verified")
-                  (flush))))
-            (catch Exception e
-              (println "ERROR marking symbols as verified:" (.getMessage e))
-              (flush)))
-          test-result)
+                  (println "\n=== Test-Filter: Bootstrap Complete ===")
+                  (println "All tests passed! Marking all symbols as verified...")
+                  (flush)
+                  (try
+            ;; Analyze and build graph on-the-fly
+                    (let [graph (tf/analyze! :paths ["src"])]
+                      (if graph
+                        (let [verified-count (tf/mark-all-verified! graph)]
+                          (println "Marked" verified-count "symbols as verified")
+                          (println "Success cache saved to:" (cache/success-cache-path))
+                          (println "Future test runs will only execute affected tests")
+                          (flush))
+                        (do
+                          (println "WARNING: Could not analyze codebase to mark symbols as verified")
+                          (flush))))
+                    (catch Exception e
+                      (println "ERROR marking symbols as verified:" (.getMessage e))
+                      (flush)))
+                  test-result)
 
         ;; Filter mode - mark selected tests as verified
-        (= mode :filter)
-        (do
-          (println "\n=== Test-Filter: Tests Passed ===")
-          (println "Marking selected changes as verified...")
-          (flush)
-          (try
-            (let [selection @selection-state]
-              (if selection
-                (let [result (tf/mark-verified! selection)]
-                  (println "Verified" (count (:verified-symbols result)) "symbols")
-                  (when (seq (:skipped-symbols result))
-                    (println "Skipped" (count (:skipped-symbols result)) "symbols (not covered by selected tests)"))
-                  (println "Success cache updated")
-                  (flush))
+                (= mode :filter)
                 (do
-                  (println "WARNING: No selection data available to mark as verified")
-                  (flush))))
-            (catch Exception e
-              (println "ERROR marking symbols as verified:" (.getMessage e))
-              (flush)))
-          test-result)
+                  (println "\n=== Test-Filter: Tests Passed ===")
+                  (println "Marking selected changes as verified...")
+                  (flush)
+                  (try
+                    (let [selection (:selection @plugin-state)]
+                      (if selection
+                        (let [result (tf/mark-verified! selection)]
+                          (println "Verified" (count (:verified-symbols result)) "symbols")
+                          (when (seq (:skipped-symbols result))
+                            (println "Skipped" (count (:skipped-symbols result)) "symbols (not covered by selected tests)"))
+                          (println "Success cache updated")
+                          (flush))
+                        (do
+                          (println "WARNING: No selection data available to mark as verified")
+                          (flush))))
+                    (catch Exception e
+                      (println "ERROR marking symbols as verified:" (.getMessage e))
+                      (flush)))
+                  test-result)
 
         ;; Unknown mode (shouldn't happen)
-        :else
-        test-result))))
+                :else
+                test-result))))
