@@ -4,7 +4,7 @@
     <groupId>com.fulcrologic</groupId>
     <artifactId>test-filter</artifactId>
     <packaging>jar</packaging>
-    <version>1.0.6</version>
+    <version>1.0.7-SNAPSHOT</version>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>1.8</maven.compiler.source>
@@ -24,7 +24,7 @@
         <url>https://github.com/fulcrologic/test-filter</url>
         <connection>scm:git:git://github.com/fulcrologic/test-filter.git</connection>
         <developerConnection>scm:git:ssh://git@github.com/fulcrologic/test-filter.git</developerConnection>
-        <tag>test-filter-1.0.6</tag>
+        <tag>HEAD</tag>
     </scm>
     <distributionManagement>
         <repository>
