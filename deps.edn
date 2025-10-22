@@ -1,7 +1,7 @@
 {:paths   ["src/main"]
 
- :deps    {org.clojure/clojure      {:mvn/version "1.12.2"}
-           clj-kondo/clj-kondo      {:mvn/version "2025.07.28"}
+ :deps    {org.clojure/clojure      {:mvn/version "1.12.3"}
+           clj-kondo/clj-kondo      {:mvn/version "2025.09.22"}
            aysylu/loom              {:mvn/version "1.0.2"}
            org.clojure/data.json    {:mvn/version "2.5.1"}
            org.clojure/tools.cli    {:mvn/version "1.1.230"}
@@ -12,11 +12,19 @@
                        :extra-deps  {fulcrologic/fulcro-spec {:mvn/version "3.1.14"}
                                      lambdaisland/kaocha     {:mvn/version "1.91.1392"}}}
 
+           :mcp
+           {:deps      {org.slf4j/slf4j-nop     {:mvn/version "2.0.17"} ;; Required for stdio server
+                        com.bhauman/clojure-mcp {:git/url "https://github.com/bhauman/clojure-mcp.git"
+                                                 :git/tag "v0.1.11-alpha"
+                                                 :git/sha "7739dba"}}
+            :exec-fn   clojure-mcp.main/start-mcp-server
+            :exec-args {:start-nrepl-cmd ["/opt/homebrew/bin/clojure" "-J-Dtest" "-A:dev:test" "-M:nrepl"]}}
+
            :clj-tests {:extra-paths ["src/test" "src/demo"]
                        :main-opts   ["-m" "kaocha.runner"]}
 
            :dev       {:extra-paths ["src/dev" "src/demo"]
                        :extra-deps  {org.clojure/tools.nrepl     {:mvn/version "0.2.13"}
-                                     io.github.tonsky/clj-reload {:mvn/version "0.9.8"}}}
+                                     io.github.tonsky/clj-reload {:mvn/version "1.0.0"}}}
 
            :cli       {:main-opts ["-m" "com.fulcrologic.test-filter.cli"]}}}

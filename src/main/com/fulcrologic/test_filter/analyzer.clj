@@ -1,11 +1,11 @@
 (ns com.fulcrologic.test-filter.analyzer
   "Analyzes Clojure source code using clj-kondo to build a symbol dependency graph."
   (:require
-    [clj-kondo.core :as clj-kondo]
-    [clojure.string :as str]
-    [clojure.tools.reader :as reader]
-    [clojure.tools.reader.reader-types :as reader-types]
-    [taoensso.tufte :refer [p]]))
+   [clj-kondo.core :as clj-kondo]
+   [clojure.string :as str]
+   [clojure.tools.reader :as reader]
+   [clojure.tools.reader.reader-types :as reader-types]
+   [taoensso.tufte :refer [p]]))
 
 (def default-test-macros
   "Default set of macro symbols that define tests."
@@ -28,16 +28,16 @@
     :namespace-definitions - Namespace definitions
     :namespace-usages - Namespace requires/imports"
   [{:keys [paths config]
-    :or   {paths ["src"]}}]
+    :or {paths ["src"]}}]
   (p `run-analysis
-    (let [config-map (merge {:lint   paths
-                             :config {:output {:analysis true}}}
-                       config)
-          result     (clj-kondo/run! config-map)]
-      (if (:analysis result)
-        result
-        (throw (ex-info "clj-kondo analysis failed"
-                 {:result result}))))))
+     (let [config-map (merge {:lint paths
+                              :config {:output {:analysis {:var-definitions {:meta true}}}}}
+                             config)
+           result (clj-kondo/run! config-map)]
+       (if (:analysis result)
+         result
+         (throw (ex-info "clj-kondo analysis failed"
+                         {:result result}))))))
 
 (defn integration-test?
   "Returns true if the namespace name suggests an integration test.
@@ -52,17 +52,17 @@
     :test-targets - Set of symbols this test explicitly targets (from metadata)
     :integration? - True if this appears to be an integration test"
   [var-def]
-  (let [meta-data    (:meta var-def)
+  (let [meta-data (:meta var-def)
         test-targets (or (:test-targets meta-data)
-                       (:test-target meta-data))
+                         (:test-target meta-data))
         ;; Normalize to set
-        targets      (cond
-                       (set? test-targets) test-targets
-                       (symbol? test-targets) #{test-targets}
-                       (sequential? test-targets) (set test-targets)
-                       :else nil)
+        targets (cond
+                  (set? test-targets) test-targets
+                  (symbol? test-targets) #{test-targets}
+                  (sequential? test-targets) (set test-targets)
+                  :else nil)
         integration? (or (:integration meta-data)
-                       (integration-test? (:ns var-def)))]
+                         (integration-test? (:ns var-def)))]
     (cond-> {}
       targets (assoc :test-targets targets)
       integration? (assoc :integration? true))))
@@ -78,13 +78,13 @@
     Map of alias symbol -> fully-qualified namespace symbol
     e.g. {'demo 'com.fulcrologic.test-filter.integration-demo}"
   [analysis filepath]
-  (let [ns-usages   (get-in analysis [:analysis :namespace-usages])
+  (let [ns-usages (get-in analysis [:analysis :namespace-usages])
         file-usages (filter #(= (:filename %) filepath) ns-usages)]
     (into {}
-      (keep (fn [{:keys [alias to]}]
-              (when alias
-                [alias to])))
-      file-usages)))
+          (keep (fn [{:keys [alias to]}]
+                  (when alias
+                    [alias to])))
+          file-usages)))
 
 (defn- resolve-aliased-symbol
   "Resolves an aliased symbol to its fully-qualified form.
@@ -118,39 +118,39 @@
     :metadata - Metadata map (may contain :test-targets with resolved symbols)"
   [source ns-sym alias-map]
   (try
-    (let [rdr   (reader-types/indexing-push-back-reader source)
+    (let [rdr (reader-types/indexing-push-back-reader source)
           forms (atom [])]
       (loop []
         (when-let [form (try (reader/read {:eof nil} rdr)
                              (catch Exception _ nil))]
           (when (and (list? form)
-                  (= 'specification (first form)))
-            (let [args             (rest form)
+                     (= 'specification (first form)))
+            (let [args (rest form)
                   ;; Check if first arg is a map (metadata)
                   [metadata-map remaining-args] (if (map? (first args))
                                                   [(first args) (rest args)]
                                                   [nil args])
                   ;; Next should be the string name
-                  test-name        (when (string? (first remaining-args))
-                                     (first remaining-args))
-                  line             (reader-types/get-line-number rdr)
+                  test-name (when (string? (first remaining-args))
+                              (first remaining-args))
+                  line (reader-types/get-line-number rdr)
                   ;; Extract and normalize test-targets
-                  test-targets     (when metadata-map
-                                     (or (:test-targets metadata-map)
-                                       (:test-target metadata-map)))
+                  test-targets (when metadata-map
+                                 (or (:test-targets metadata-map)
+                                     (:test-target metadata-map)))
                   ;; Helper to unwrap quoted forms like (quote demo/validate-payment)
-                  unwrap-quote     (fn [x]
-                                     (if (and (list? x)
-                                           (= 'quote (first x))
-                                           (symbol? (second x)))
-                                       (second x)
-                                       x))
+                  unwrap-quote (fn [x]
+                                 (if (and (list? x)
+                                          (= 'quote (first x))
+                                          (symbol? (second x)))
+                                   (second x)
+                                   x))
                   ;; Helper to resolve aliased symbols
-                  resolve-sym      (fn [sym]
-                                     (let [unwrapped (unwrap-quote sym)]
-                                       (if (symbol? unwrapped)
-                                         (resolve-aliased-symbol unwrapped alias-map)
-                                         unwrapped)))
+                  resolve-sym (fn [sym]
+                                (let [unwrapped (unwrap-quote sym)]
+                                  (if (symbol? unwrapped)
+                                    (resolve-aliased-symbol unwrapped alias-map)
+                                    unwrapped)))
                   ;; Normalize test-targets to a set of symbols
                   resolved-targets (when test-targets
                                      (cond
@@ -160,28 +160,28 @@
 
                                        ;; Quoted form like (quote demo/validate-payment)
                                        (and (list? test-targets)
-                                         (= 'quote (first test-targets)))
+                                            (= 'quote (first test-targets)))
                                        #{(resolve-sym test-targets)}
 
                                        ;; Set of symbols (unwrap quotes and resolve aliases)
                                        (set? test-targets)
                                        (into #{}
-                                         (map resolve-sym)
-                                         test-targets)
+                                             (map resolve-sym)
+                                             test-targets)
 
                                        ;; Sequential (unwrap quotes and resolve aliases)
                                        (sequential? test-targets)
                                        (into #{}
-                                         (map resolve-sym)
-                                         test-targets)
+                                             (map resolve-sym)
+                                             test-targets)
 
                                        :else nil))
-                  final-metadata   (cond-> {}
-                                     resolved-targets (assoc :test-targets resolved-targets))]
+                  final-metadata (cond-> {}
+                                   resolved-targets (assoc :test-targets resolved-targets))]
               (when test-name
-                (swap! forms conj {:line      line
+                (swap! forms conj {:line line
                                    :test-name test-name
-                                   :metadata  final-metadata}))))
+                                   :metadata final-metadata}))))
           (recur)))
       @forms)
     (catch Exception e
@@ -202,12 +202,12 @@
     {:test-line-ranges {filepath -> [{:test-var :start-line :end-line}]}
      :macro-test-nodes [[test-sym node-data]]}"
   [analysis test-macros]
-  (let [var-usages  (get-in analysis [:analysis :var-usages])
+  (let [var-usages (get-in analysis [:analysis :var-usages])
         macro-calls (filterv (fn [{:keys [to name]}]
                                (contains? test-macros
-                                 (symbol (str to) (str name))))
-                      var-usages)
-        by-file     (group-by :filename macro-calls)]
+                                          (symbol (str to) (str name))))
+                             var-usages)
+        by-file (group-by :filename macro-calls)]
 
     (if (empty? by-file)
       {:test-line-ranges {}
@@ -216,71 +216,71 @@
       ;; Parse each file once and create both outputs
       (let [parsed-files
             (into {}
-              (remove nil?)
-              (pmap
-                (fn [[filepath calls]]
-                  (try
-                    (let [source       (slurp filepath)
+                  (remove nil?)
+                  (pmap
+                   (fn [[filepath calls]]
+                     (try
+                       (let [source (slurp filepath)
                           ;; Use the new parser to extract specification forms with metadata
-                          ns-sym       (:from (first calls))
+                             ns-sym (:from (first calls))
                           ;; Build alias map for this file
-                          alias-map    (build-alias-map analysis filepath)
+                             alias-map (build-alias-map analysis filepath)
                           ;; Parse with alias resolution
-                          specs        (parse-specification-forms source ns-sym alias-map)
+                             specs (parse-specification-forms source ns-sym alias-map)
                           ;; Filter out :refer usages (single line, row=end-row) and :cljs language
-                          actual-calls (filterv (fn [call]
-                                                  (and (not= (:row call) (:end-row call))
-                                                    (not= (:lang call) :cljs)))
-                                         calls)]
+                             actual-calls (filterv (fn [call]
+                                                     (and (not= (:row call) (:end-row call))
+                                                          (not= (:lang call) :cljs)))
+                                                   calls)]
 
                       ;; Match specs with clj-kondo call data
-                      (when (= (count specs) (count actual-calls))
-                        [filepath
-                         {:specs    specs
-                          :calls    actual-calls
-                          :ns-sym   ns-sym
-                          :filepath filepath}]))
-                    (catch Exception e
-                      nil)))
-                by-file))]
+                         (when (= (count specs) (count actual-calls))
+                           [filepath
+                            {:specs specs
+                             :calls actual-calls
+                             :ns-sym ns-sym
+                             :filepath filepath}]))
+                       (catch Exception e
+                         nil)))
+                   by-file))]
 
         ;; Build both outputs from parsed data
         {:test-line-ranges
          (into {}
-           (for [[filepath {:keys [specs calls ns-sym]}] parsed-files]
-             [filepath
-              (mapv (fn [spec call]
-                      (let [test-name (:test-name spec)
-                            var-name  (symbol (str "__"
-                                                (str/replace test-name #"[^\w\d\-\!\#\$\%\&\*\_\<\>\?\|]" "-")
-                                                "__"))
-                            test-sym  (symbol (str ns-sym) (str var-name))]
-                        {:test-var   test-sym
-                         :start-line (:row call)
-                         :end-line   (:end-row call)}))
-                specs calls)]))
+               (for [[filepath {:keys [specs calls ns-sym]}] parsed-files]
+                 [filepath
+                  (mapv (fn [spec call]
+                          (let [test-name (:test-name spec)
+                                var-name (symbol (str "__"
+                                                      (str/replace test-name #"[^\w\d\-\!\#\$\%\&\*\_\<\>\?\|]" "-")
+                                                      "__"))
+                                test-sym (symbol (str ns-sym) (str var-name))]
+                            {:test-var test-sym
+                             :start-line (:row call)
+                             :end-line (:end-row call)}))
+                        specs calls)]))
 
          :macro-test-nodes
          (vec
-           (for [[filepath {:keys [specs ns-sym]}] parsed-files
-                 {:keys [line test-name metadata]} specs]
-             (let [var-name      (symbol (str "__"
-                                           (str/replace test-name #"[^\w\d\-\!\#\$\%\&\*\_\<\>\?\|]" "-")
-                                           "__"))
-                   test-sym      (symbol (str ns-sym) (str var-name))
+          (for [[filepath {:keys [specs ns-sym]}] parsed-files
+                {:keys [line test-name metadata]} specs]
+            (let [var-name (symbol (str "__"
+                                        (str/replace test-name #"[^\w\d\-\!\#\$\%\&\*\_\<\>\?\|]" "-")
+                                        "__"))
+                  test-sym (symbol (str ns-sym) (str var-name))
                    ;; Merge the extracted metadata with base test metadata
-                   full-metadata (merge {:test       true
-                                         :macro-test true
-                                         :test-name  test-name}
-                                   metadata)]
-               [test-sym
-                {:symbol     test-sym
-                 :type       :test
-                 :file       filepath
-                 :line       line
-                 :end-line   line
-                 :defined-by 'fulcro-spec.core/specification
-                 :metadata   full-metadata}])))}))))
+                  full-metadata (merge {:test true
+                                        :macro-test true
+                                        :test-name test-name}
+                                       metadata)]
+              [test-sym
+               {:symbol test-sym
+                :type :test
+                :file filepath
+                :line line
+                :end-line line
+                :defined-by 'fulcro-spec.core/specification
+                :metadata full-metadata}])))}))))
 
 ;; Forward declarations
 (declare find-macro-tests)
@@ -295,29 +295,29 @@
   Also filters out pure .cljs files entirely."
   [analysis]
   (p `extract-var-definitions
-    (let [var-defs (get-in analysis [:analysis :var-definitions])
+     (let [var-defs (get-in analysis [:analysis :var-definitions])
           ;; Filter to only CLJ:
           ;; - Reject if filename ends with .cljs (pure CLJS files)
           ;; - Reject if :lang is :cljs (CLJS side of CLJC files)
           ;; - Accept if :lang is nil (pure .clj files) or :clj (CLJ side of CLJC)
-          clj-only (filter (fn [def]
-                             (let [lang     (:lang def)
-                                   filename (:filename def)]
-                               (and (not= :cljs lang)
-                                 (not (str/ends-with? filename ".cljs")))))
-                     var-defs)]
-      (map (fn [{:keys [ns name filename row end-row defined-by meta] :as def}]
-             (let [base-metadata (select-keys def [:private :macro :deprecated :test])
-                   test-metadata (when (:test def) (extract-test-metadata def))
-                   all-metadata  (merge base-metadata test-metadata)]
-               {:symbol     (symbol (str ns) (str name))
-                :type       :var
-                :file       filename
-                :line       row
-                :end-line   end-row
-                :defined-by defined-by
-                :metadata   all-metadata}))
-        clj-only))))
+           clj-only (filter (fn [def]
+                              (let [lang (:lang def)
+                                    filename (:filename def)]
+                                (and (not= :cljs lang)
+                                     (not (str/ends-with? filename ".cljs")))))
+                            var-defs)]
+       (map (fn [{:keys [ns name filename row end-row defined-by meta] :as def}]
+              (let [base-metadata (select-keys def [:private :macro :deprecated :test])
+                    test-metadata (when (:test def) (extract-test-metadata def))
+                    all-metadata (merge base-metadata test-metadata)]
+                {:symbol (symbol (str ns) (str name))
+                 :type :var
+                 :file filename
+                 :line row
+                 :end-line end-row
+                 :defined-by defined-by
+                 :metadata all-metadata}))
+            clj-only))))
 
 (defn extract-namespace-definitions
   "Extracts namespace definitions from clj-kondo analysis.
@@ -325,21 +325,21 @@
   Also filters out pure .cljs files entirely."
   [analysis]
   (p `extract-namespace-definitions
-    (let [ns-defs  (get-in analysis [:analysis :namespace-definitions])
+     (let [ns-defs (get-in analysis [:analysis :namespace-definitions])
           ;; Filter to only CLJ (same logic as var-definitions)
-          clj-only (filter (fn [def]
-                             (let [lang     (:lang def)
-                                   filename (:filename def)]
-                               (and (not= :cljs lang)
-                                 (not (str/ends-with? filename ".cljs")))))
-                     ns-defs)]
-      (map (fn [{:keys [name filename row] :as def}]
-             {:symbol   name
-              :type     :namespace
-              :file     filename
-              :line     row
-              :metadata (select-keys def [:deprecated :doc])})
-        clj-only))))
+           clj-only (filter (fn [def]
+                              (let [lang (:lang def)
+                                    filename (:filename def)]
+                                (and (not= :cljs lang)
+                                     (not (str/ends-with? filename ".cljs")))))
+                            ns-defs)]
+       (map (fn [{:keys [name filename row] :as def}]
+              {:symbol name
+               :type :namespace
+               :file filename
+               :line row
+               :metadata (select-keys def [:deprecated :doc])})
+            clj-only))))
 
 (defn extract-var-usages
   "Extracts var usage edges from clj-kondo analysis.
@@ -353,12 +353,12 @@
   ([analysis test-line-ranges]
    (let [var-usages (get-in analysis [:analysis :var-usages])
          ;; Filter to only CLJ (excludes js/ and other cljs refs)
-         clj-only   (filterv (fn [usage]
-                               (let [lang     (:lang usage)
-                                     filename (:filename usage)]
-                                 (and (not= :cljs lang)
-                                   (not (str/ends-with? filename ".cljs")))))
-                      var-usages)]
+         clj-only (filterv (fn [usage]
+                             (let [lang (:lang usage)
+                                   filename (:filename usage)]
+                               (and (not= :cljs lang)
+                                    (not (str/ends-with? filename ".cljs")))))
+                           var-usages)]
      (map (fn [{:keys [from to name from-var filename row]}]
             (let [from-sym (if from-var
                              ;; Regular case: usage inside a function
@@ -366,22 +366,22 @@
                              ;; Top-level usage: check if it's in a macro test
                              (if-let [test-ranges (get test-line-ranges filename)]
                                ;; Find which test var this line belongs to
-                               (or (when row                ; Only try to match line ranges if row is not nil
+                               (or (when row ; Only try to match line ranges if row is not nil
                                      (some (fn [{:keys [test-var start-line end-line]}]
                                              (when (and start-line end-line
-                                                     (>= row start-line)
-                                                     (<= row end-line))
+                                                        (>= row start-line)
+                                                        (<= row end-line))
                                                test-var))
-                                       test-ranges))
+                                           test-ranges))
                                  ;; Fall back to namespace if not in a test range or row is nil
-                                 (symbol (str from)))
+                                   (symbol (str from)))
                                ;; No test ranges for this file, use namespace
                                (symbol (str from))))]
               {:from from-sym
-               :to   (symbol (str to) (str name))
+               :to (symbol (str to) (str name))
                :file filename
                :line row}))
-       clj-only))))
+          clj-only))))
 
 (defn build-symbol-graph
   "Builds a complete symbol graph from clj-kondo analysis.
@@ -393,32 +393,32 @@
      :analysis - original analysis for reference}"
   [analysis]
   (p `build-symbol-graph
-    (let [var-nodes (extract-var-definitions analysis)
-          ns-nodes  (extract-namespace-definitions analysis)
+     (let [var-nodes (extract-var-definitions analysis)
+           ns-nodes (extract-namespace-definitions analysis)
 
           ;; OPTIMIZED: Parse macro test files once, get both outputs
-          {:keys [test-line-ranges macro-test-nodes]}
-          (parse-macro-test-files analysis default-test-macros)
+           {:keys [test-line-ranges macro-test-nodes]}
+           (parse-macro-test-files analysis default-test-macros)
 
-          all-nodes (concat var-nodes ns-nodes (map second macro-test-nodes))
-          edges     (vec (extract-var-usages analysis test-line-ranges))
+           all-nodes (concat var-nodes ns-nodes (map second macro-test-nodes))
+           edges (vec (extract-var-usages analysis test-line-ranges))
 
           ;; Build files map: file-path -> {:symbols [symbols-in-file]}
-          files-map (reduce (fn [acc node]
-                              (let [file (:file node)
-                                    sym  (:symbol node)]
-                                (update acc file
-                                  (fn [file-data]
-                                    (update (or file-data {:symbols []})
-                                      :symbols conj sym)))))
-                      {}
-                      all-nodes)]
-      {:nodes    (into {}
-                   (map (fn [node] [(:symbol node) node]))
-                   all-nodes)
-       :edges    edges
-       :files    files-map
-       :analysis analysis})))
+           files-map (reduce (fn [acc node]
+                               (let [file (:file node)
+                                     sym (:symbol node)]
+                                 (update acc file
+                                         (fn [file-data]
+                                           (update (or file-data {:symbols []})
+                                                   :symbols conj sym)))))
+                             {}
+                             all-nodes)]
+       {:nodes (into {}
+                     (map (fn [node] [(:symbol node) node]))
+                     all-nodes)
+        :edges edges
+        :files files-map
+        :analysis analysis})))
 
 ;; -----------------------------------------------------------------------------
 ;; Test Identification
@@ -428,14 +428,14 @@
   "Returns true if the node represents a test var."
   [node]
   (or (= 'clojure.test/deftest (:defined-by node))
-    (get-in node [:metadata :test])))
+      (get-in node [:metadata :test])))
 
 (defn find-test-vars
   "Returns all test vars from the symbol graph."
   [symbol-graph]
   (filterv
-    (fn [[_sym node]] (test-var? node))
-    (:nodes symbol-graph)))
+   (fn [[_sym node]] (test-var? node))
+   (:nodes symbol-graph)))
 
 (defn find-macro-tests
   "Find tests defined by macros like fulcro-spec's specification.
@@ -449,7 +449,7 @@
   ([analysis] (find-macro-tests analysis default-test-macros))
   ([analysis test-macros]
    (p `find-macro-tests
-     (:macro-test-nodes (parse-macro-test-files analysis test-macros)))))
+      (:macro-test-nodes (parse-macro-test-files analysis test-macros)))))
 
 (comment
   ;; Example usage:
