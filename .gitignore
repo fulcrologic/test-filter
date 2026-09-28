@@ -8,4 +8,3 @@ test_workflow.clj
 target
 .clojure-mcp
 node_modules/
-package-lock.json
