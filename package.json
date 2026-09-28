@@ -7,7 +7,6 @@
     "doc": "docs"
   },
   "scripts": {
-    "preinstall": "npx only-allow@1.2.2 pnpm",
     "test": "echo \"Error: no test specified\" && exit 1",
     "build:slides": "marp presentation.md --html -o presentation.html",
     "build:pdf": "marp presentation.md --html --pdf --allow-local-files -o presentation.pdf",
@@ -19,5 +18,11 @@
   "devDependencies": {
     "@marp-team/marp-cli": "4.2.3"
   },
-  "packageManager": "pnpm@11.21.0"
+  "packageManager": "pnpm@11.21.0",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "11.21.0"
+    }
+  }
 }
